@@ -35,6 +35,8 @@ pub enum AppEvent {
     Review(u64, HEvent),
     /// An extension's answer for its panel.
     Panel(u64, codeit_harness::extension::Reply),
+    /// What the extensions show in the footer.
+    ExtStatus(Vec<(String, codeit_harness::extension::Tone)>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -333,6 +335,9 @@ pub struct App {
     /// (tokens used, usable) of the latest request.
     pub context: Option<(u64, u64)>,
     pub commands: Vec<Command>,
+    /// What the extensions show in the footer, and when it was last asked for.
+    pub ext_status: Vec<(String, codeit_harness::extension::Tone)>,
+    ext_status_at: Option<Instant>,
     pub tick: usize,
     pub quit: bool,
 }
@@ -392,6 +397,8 @@ impl App {
             queued: Vec::new(),
             context: None,
             commands,
+            ext_status: Vec::new(),
+            ext_status_at: None,
             tick: 0,
             quit: false,
         };
@@ -402,6 +409,22 @@ impl App {
         app.refresh_models();
         app.refresh_git();
         app
+    }
+
+    /// Asks the extensions for their footer, unless it was asked for less than `min_age` ago.
+    pub(super) fn refresh_ext_status(&mut self, min_age: Duration) {
+        if self.harness.extensions.is_empty() || self.ext_status_at.is_some_and(|t| t.elapsed() < min_age) {
+            return;
+        }
+        self.ext_status_at = Some(Instant::now());
+        let (tx, exts) = (self.tx.clone(), self.harness.extensions.clone());
+        tokio::spawn(async move {
+            let mut all = Vec::new();
+            for e in exts {
+                all.extend(e.status().await);
+            }
+            let _ = tx.send(AppEvent::ExtStatus(all));
+        });
     }
 
     /// The branch and how many files changed, in the background.
@@ -473,6 +496,10 @@ impl App {
                 if self.tick.is_multiple_of(50) {
                     self.refresh_git();
                 }
+                // Extensions' footer shortly after start, then every 5 min.
+                if self.tick == 15 || self.tick.is_multiple_of(3000) {
+                    self.refresh_ext_status(Duration::ZERO);
+                }
             }
             AppEvent::Side(SideUpdate::Git(branch, changes)) => {
                 self.side.branch = branch;
@@ -509,6 +536,7 @@ impl App {
             AppEvent::Status(lines) => self.notice(lines.join("\n")),
             AppEvent::Review(id, ev) => self.review_event(id, ev),
             AppEvent::Panel(seq, reply) => self.panel_reply(seq, reply),
+            AppEvent::ExtStatus(s) => self.ext_status = s,
         }
     }
 
@@ -1575,6 +1603,7 @@ impl App {
 
     fn turn_done(&mut self) {
         self.close_text();
+        self.refresh_ext_status(Duration::from_secs(60));
         let Some(t) = self.turn.take() else { return };
         // Calls that never got a result (interrupted) stop spinning.
         for i in &mut self.items {

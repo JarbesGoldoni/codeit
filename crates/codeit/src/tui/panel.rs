@@ -37,7 +37,7 @@ pub struct PanelView {
     last_poll: Instant,
 }
 
-fn tone(t: Tone) -> Style {
+pub(super) fn tone(t: Tone) -> Style {
     match t {
         Tone::Normal => Style::new(),
         Tone::Ok => Style::new().green(),
@@ -109,7 +109,9 @@ impl App {
                 if let Some(target) = session {
                     self.open_session_titled(&target.prefix, &target.title);
                 }
-                self.submit_text(text);
+                if !text.trim().is_empty() {
+                    self.submit_text(text);
+                }
             }
             Reply::Notice(text) => {
                 self.panel = None;

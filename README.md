@@ -242,7 +242,7 @@ Plugins live in their own repos and build their own binary: a Rust crate that de
 
 An extension is a Rust value implementing `codeit_harness::extension::Extension`. It can change the config at startup (add skill folders, instruction files, commands, MCP servers), add to the system prompt, set environment variables for every bash command, and add tools, like opencode plugins' `config`, `experimental.chat.system.transform` and `shell.env` hooks.
 
-It can also add slash commands that open a **panel**. The extension answers each action (opened, Enter on a row, one of its keys, text typed, a poll) with a reply: a panel (titled sections of rows, each with a tone, an optional bar and detail lines, plus the keys it handles), a request for a line of text (optionally masked), a prompt to send (optionally in a task's own session), or a notice. The interface draws it; the extension never touches the UI, so it would work the same in another interface.
+It can show a few words in the footer (a quota, say), refreshed at start, every 5 minutes and after a turn. It can also add slash commands that open a **panel**. The extension answers each action (opened, Enter on a row, one of its keys, text typed, a poll) with a reply: a panel (titled sections of rows, each with a tone, an optional bar and detail lines, plus the keys it handles), a request for a line of text (optionally masked), a prompt to send (optionally in a task's own session), or a notice. The interface draws it; the extension never touches the UI, so it would work the same in another interface.
 
 ## Configuration
 

@@ -182,7 +182,14 @@ fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
         Some(m) => format!("{}{} ", m.key(), app.effort.as_ref().map(|e| format!(" · {e}")).unwrap_or_default()),
         None => "no model: /models ".into(),
     };
-    f.render_widget(right(left, vec![model.dim()], area.width as usize), area);
+    let mut status: Vec<Span> =
+        app.ext_status.iter().map(|(t, tone)| Span::styled(t.clone(), super::panel::tone(*tone))).collect();
+    if !status.is_empty() {
+        status.insert(0, "  ".into());
+        status.push("  ".into());
+    }
+    status.push(model.dim());
+    f.render_widget(right(left, status, area.width as usize), area);
 }
 
 /// The side bubble: the session's title and context on top, branch and folder under them.

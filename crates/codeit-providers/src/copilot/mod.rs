@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue};
 use tokio::sync::{Mutex, mpsc::UnboundedSender};
 
-pub use auth::DeviceFlow;
+pub use auth::{DeviceFlow, Token};
 use models::{CopilotModel, Endpoint};
 
 use crate::paths::debug;
@@ -36,6 +36,12 @@ impl Copilot {
 /// Starts a device login. Show `flow.login` to the user, then `flow.wait().await` saves the token.
 pub async fn login(enterprise: Option<&str>) -> Result<DeviceFlow> {
     auth::start(enterprise).await
+}
+
+/// The GitHub token Copilot uses (CODEIT_COPILOT_TOKEN, codeit's login, then opencode's), for
+/// plugins that call other GitHub Copilot APIs (quota).
+pub fn saved_token() -> Option<Token> {
+    auth::load()
 }
 
 /// Removes codeit's saved Copilot login. Returns false when there was none.

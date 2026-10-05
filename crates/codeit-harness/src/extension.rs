@@ -4,7 +4,7 @@
 //! files, commands, MCP servers), add to every system prompt, set environment variables for
 //! shell commands, and provide tools. Every hook has a default that does nothing.
 //!
-//! It can also add slash commands that open a **panel**: a titled list of sections and rows,
+//! It can show a few words in the footer ([`Extension::status`]), and add slash commands that open a **panel**: a titled list of sections and rows,
 //! each with a tone, plus the keys the panel handles. The interface draws it; the extension
 //! only answers [`Action`]s with a [`Reply`], so the same extension works in any interface.
 
@@ -35,6 +35,12 @@ pub trait Extension: Send + Sync {
 
     /// Slash commands that open a panel (prompt commands go through `config` instead).
     fn commands(&self) -> Vec<ExtCommand> {
+        Vec::new()
+    }
+
+    /// A few words for the footer (a quota, say), in pieces with their tone. Asked shortly
+    /// after start, every 5 minutes, and after a turn (at most once a minute).
+    async fn status(&self) -> Vec<(String, Tone)> {
         Vec::new()
     }
 
@@ -133,6 +139,7 @@ pub enum Reply {
         secret: bool,
     },
     /// Close the panel and send this to the agent, in the current session or in `session`.
+    /// Empty text only opens `session`.
     Prompt {
         text: String,
         session: Option<SessionTarget>,
