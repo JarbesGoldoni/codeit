@@ -1157,6 +1157,10 @@ impl App {
                 self.picker = Some(picker_with(PickerKind::Key(c)));
             }
             Method::CopilotEnterprise => self.picker = Some(picker_with(PickerKind::Enterprise)),
+            Method::Own => {
+                self.picker = None;
+                self.notice(format!("{}: {}", c.name, c.how));
+            }
             _ => self.start_login(m, c.name, None),
         }
     }

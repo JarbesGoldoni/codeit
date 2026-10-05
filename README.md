@@ -236,9 +236,11 @@ Rules are the same as opencode's: a permission (a tool name, or `edit` for every
 - **MCP servers.** Local (stdio) and remote servers from the `mcp` config key, in opencode's format. Remote servers speak streamable HTTP, or the older HTTP+SSE transport (used when the URL ends in `/sse`, or when a server refuses streamable HTTP). A remote server without an `Authorization` header that asks for OAuth shows as "needs a login" in `/mcp`; `/mcp login <name>` opens the browser, registers codeit with the server's authorization server, and stores the tokens (refreshed automatically) in `~/.local/share/codeit/mcp-auth.json`, mode 600. `/mcp logout <name>` forgets them. Images MCP tools return go to the model. Their tools are offered as `<server>_<tool>` and their instructions join the system prompt. They connect in the background; `/status` shows them.
 - **The environment.** Working directory, git root, platform (WSL is detected), date and model.
 
-### Extensions
+### Plugins
 
-An extension is a Rust value implementing `codeit_harness::extension::Extension`; add yours to `extensions()` in `crates/codeit/src/main.rs`. It can change the config at startup (add skill folders, instruction files, commands, MCP servers), add to the system prompt, set environment variables for every bash command, and add tools, like opencode plugins' `config`, `experimental.chat.system.transform` and `shell.env` hooks.
+Plugins live in their own repos and build their own binary: a Rust crate that depends on codeit's crates (by git) and calls `codeit::main(codeit::Plugins { providers, extensions })` from its `main`. That binary is codeit plus the plugin, with the same config, logins and sessions. A plugin provider implements `codeit_providers::Provider`; when it logs in with its own tool, `/login` shows what its status says to do. For example, a plugin can add a provider that uses another tool's login.
+
+An extension is a Rust value implementing `codeit_harness::extension::Extension`. It can change the config at startup (add skill folders, instruction files, commands, MCP servers), add to the system prompt, set environment variables for every bash command, and add tools, like opencode plugins' `config`, `experimental.chat.system.transform` and `shell.env` hooks.
 
 It can also add slash commands that open a **panel**. The extension answers each action (opened, Enter on a row, one of its keys, text typed, a poll) with a reply: a panel (titled sections of rows, each with a tone, an optional bar and detail lines, plus the keys it handles), a request for a line of text (optionally masked), a prompt to send (optionally in a task's own session), or a notice. The interface draws it; the extension never touches the UI, so it would work the same in another interface.
 

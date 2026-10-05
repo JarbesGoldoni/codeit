@@ -45,7 +45,7 @@ fn last_session() -> Result<Session> {
 }
 
 pub async fn run(args: Vec<String>) -> Result<()> {
-    let providers = codeit_providers::all();
+    let providers = crate::providers();
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     match a.as_slice() {
         [] => crate::tui::run(None).await?,
@@ -183,6 +183,7 @@ async fn login(providers: &[std::sync::Arc<dyn codeit_providers::Provider>], id:
             crate::login::save_key(&c.id, &key)?;
             println!("Saved. `codeit models` lists its models.");
         }
+        Method::Own => println!("{}", c.how),
         _ => {
             let enterprise = if method == Method::CopilotEnterprise {
                 Some(ask("GitHub Enterprise domain (company.ghe.com): ")?)
@@ -230,7 +231,7 @@ async fn run_once(args: &[&str]) -> Result<()> {
         bail!("no prompt given");
     }
     let cwd = std::env::current_dir()?;
-    let harness = Harness::new(&cwd, codeit_providers::all(), crate::extensions()).await;
+    let harness = Harness::new(&cwd, crate::providers(), crate::extensions()).await;
     for p in &harness.problems {
         eprintln!("config: {p}");
     }

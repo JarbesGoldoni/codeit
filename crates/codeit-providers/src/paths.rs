@@ -58,7 +58,7 @@ pub(crate) fn xdg(var: &str, fallback: &str) -> PathBuf {
 }
 
 /// Appends a line to `~/.cache/codeit/debug.log` when CODEIT_DEBUG is set. Never pass tokens here.
-pub(crate) fn debug(message: &str, data: impl std::fmt::Display) {
+pub fn debug(message: &str, data: impl std::fmt::Display) {
     if std::env::var_os("CODEIT_DEBUG").is_none() {
         return;
     }

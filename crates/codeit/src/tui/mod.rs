@@ -23,7 +23,7 @@ use app::{App, AppEvent};
 /// Opens the TUI, on `resume` if given.
 pub async fn run(resume: Option<codeit_harness::session::Session>) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let harness = codeit_harness::Harness::new(&cwd, codeit_providers::all(), crate::extensions()).await;
+    let harness = codeit_harness::Harness::new(&cwd, crate::providers(), crate::extensions()).await;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
     let tick_tx = tx.clone();

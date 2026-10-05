@@ -17,6 +17,8 @@ pub enum Method {
     ChatGptBrowser,
     ChatGptDevice,
     ApiKey,
+    /// A plugin provider that logs in with its own tool: show what its status says to do.
+    Own,
 }
 
 impl Method {
@@ -27,6 +29,7 @@ impl Method {
             Method::ChatGptBrowser => "ChatGPT Plus/Pro (browser)",
             Method::ChatGptDevice => "ChatGPT Plus/Pro (code, no browser here)",
             Method::ApiKey => "API key",
+            Method::Own => "its own login",
         }
     }
 }
@@ -42,6 +45,8 @@ pub struct Choice {
     /// Where to get a key, and the variables that can hold one.
     pub doc: Option<String>,
     pub env: Vec<String>,
+    /// What the provider says to do to log in (its status when logged out).
+    pub how: String,
 }
 
 /// opencode's order, then codeit's own, then by name.
@@ -52,10 +57,12 @@ fn rank(id: &str) -> usize {
         .unwrap_or(99)
 }
 
-fn methods(id: &str) -> Vec<Method> {
+/// `plugin`: a provider added by a plugin binary, not codeit's own nor the catalog's.
+fn methods(id: &str, plugin: bool) -> Vec<Method> {
     match id {
         "copilot" => vec![Method::Copilot, Method::CopilotEnterprise],
         "openai" => vec![Method::ChatGptBrowser, Method::ChatGptDevice, Method::ApiKey],
+        _ if plugin => vec![Method::Own],
         _ => vec![Method::ApiKey],
     }
 }
@@ -79,12 +86,18 @@ pub async fn choices(providers: &[Arc<dyn Provider>]) -> Vec<Choice> {
         if local.is_some_and(|c| c.is_local()) {
             continue;
         }
+        let status = p.status().await;
+        let plugin = local.is_none() && !["copilot", "zai-coding-plan", "openai"].contains(&p.id());
         out.push(Choice {
             id: p.id().to_string(),
             name: p.name().to_string(),
             hint: hint(p.id()).to_string(),
-            logged_in: matches!(p.status().await, AuthStatus::LoggedIn(_)),
-            methods: methods(p.id()),
+            logged_in: matches!(status, AuthStatus::LoggedIn(_)),
+            methods: methods(p.id(), plugin),
+            how: match status {
+                AuthStatus::LoggedIn(s) => format!("Logged in: {s}"),
+                AuthStatus::LoggedOut(s) => s,
+            },
             doc: local.and_then(|c| c.doc.clone()),
             env: local.map(|c| c.env_keys()).unwrap_or_else(|| match p.id() {
                 "zai-coding-plan" => vec!["ZAI_API_KEY".into()],
@@ -140,6 +153,6 @@ pub async fn start(method: Method, enterprise: Option<&str>) -> Result<Started> 
             let (url, code) = (flow.login.url.clone(), flow.login.code.clone());
             Started { url, code, wait: Box::pin(flow.wait()) }
         }
-        Method::ApiKey => bail!("{} isn't a browser login", method.label()),
+        Method::ApiKey | Method::Own => bail!("{} isn't a browser login", method.label()),
     })
 }
