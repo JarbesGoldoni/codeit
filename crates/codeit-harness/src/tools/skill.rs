@@ -41,14 +41,20 @@ Load one when the task matches a skill listed in the system prompt, before start
 
     async fn run(&self, input: Value, ctx: &Ctx) -> Result<Output> {
         let name = arg(&input, "name")?;
-        let skill = ctx.harness.skills.iter().find(|s| s.name == name).ok_or_else(|| {
-            let names: Vec<&str> = ctx.harness.skills.iter().map(|s| s.name.as_str()).collect();
+        let skills = ctx.harness.skills();
+        let skill = skills.iter().find(|s| s.name == name).ok_or_else(|| {
+            let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
             anyhow!(
                 "No skill named `{name}`. Available: {}",
                 if names.is_empty() { "none".into() } else { names.join(", ") }
             )
         })?;
         ctx.ask("skill", &[name.to_string()], &[name.to_string()], format!("load skill {name}"), None).await?;
+        let display = Some(format!("Loaded skill {name}"));
+        if skill.text.is_some() {
+            let content = format!("<skill name=\"{name}\">\n{}\n</skill>", skill.body().trim());
+            return Ok(Output { content, display, diff: None, ..Default::default() });
+        }
         let dir = skill.dir();
         let mut files: Vec<String> = ignore::WalkBuilder::new(dir)
             .max_depth(Some(3))
@@ -64,6 +70,6 @@ Load one when the task matches a skill listed in the system prompt, before start
             out.push_str(&format!("\nFiles in the skill folder (paths are relative to it): {}\n", files.join(", ")));
         }
         out.push_str("</skill>");
-        Ok(Output { content: out, display: Some(format!("Loaded skill {name}")), diff: None, ..Default::default() })
+        Ok(Output { content: out, display, diff: None, ..Default::default() })
     }
 }

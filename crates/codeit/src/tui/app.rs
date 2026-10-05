@@ -136,24 +136,20 @@ pub enum ModelRole {
     Code,
     /// The plan agent and code reviews.
     Think,
-    /// Helper calls: condensing long output, summaries.
-    Small,
 }
 
 impl ModelRole {
-    pub const ALL: [ModelRole; 3] = [ModelRole::Code, ModelRole::Think, ModelRole::Small];
+    pub const ALL: [ModelRole; 2] = [ModelRole::Code, ModelRole::Think];
     pub fn name(self) -> &'static str {
         match self {
             ModelRole::Code => "code",
             ModelRole::Think => "think",
-            ModelRole::Small => "small",
         }
     }
     pub fn purpose(self) -> &'static str {
         match self {
             ModelRole::Code => "build agent: does the work",
             ModelRole::Think => "plan agent and code reviews",
-            ModelRole::Small => "condenses long output, writes summaries",
         }
     }
 }
@@ -213,7 +209,7 @@ pub struct Command {
 }
 
 const BUILTIN: &[(&str, &str, &str)] = &[
-    ("/models", "", "pick the code, think and small models"),
+    ("/models", "", "pick the code and think models"),
     ("/effort", "[level]", "choose the reasoning effort (ctrl+t cycles)"),
     ("/agent", "[name]", "switch agent: build or plan (tab cycles)"),
     ("/new", "", "start a new session"),
@@ -230,10 +226,54 @@ const BUILTIN: &[(&str, &str, &str)] = &[
     ("/login", "[provider]", "log in to a provider (opencode's list)"),
     ("/logout", "<provider>", "remove a login codeit saved"),
     ("/status", "", "logins, MCP servers, skills, session"),
-    ("/refresh", "", "reload the model lists"),
     ("/help", "", "list commands and keys"),
     ("/exit", "", "exit codeit"),
 ];
+
+/// The built-in commands, then extension panels and prompt commands.
+fn command_list(harness: &Harness) -> Vec<Command> {
+    let mut commands: Vec<Command> = BUILTIN
+        .iter()
+        .map(|(n, a, h)| Command {
+            name: n.to_string(),
+            args: a.to_string(),
+            help: h.to_string(),
+            long: String::new(),
+            ext: None,
+        })
+        .collect();
+    for e in &harness.extensions {
+        for c in e.commands().into_iter().filter(|c| c.panel) {
+            commands.push(Command {
+                name: format!("/{}", c.name),
+                args: String::new(),
+                help: c.description,
+                long: c.help,
+                ext: Some(e.clone()),
+            });
+        }
+    }
+    for c in &harness.commands() {
+        if !commands.iter().any(|b| b.name == format!("/{}", c.name)) {
+            commands.push(Command {
+                name: format!("/{}", c.name),
+                args: String::new(),
+                help: c.description.clone(),
+                long: String::new(),
+                ext: None,
+            });
+        }
+    }
+    // Help that extensions give for their prompt commands.
+    for e in &harness.extensions {
+        for c in e.commands().into_iter().filter(|c| !c.panel) {
+            if let Some(cmd) = commands.iter_mut().find(|x| x.name == format!("/{}", c.name)) {
+                cmd.long = c.help;
+            }
+        }
+    }
+    commands
+}
 
 pub struct Turn {
     pub id: u64,
@@ -317,46 +357,7 @@ impl App {
             };
             s
         });
-        let mut commands: Vec<Command> = BUILTIN
-            .iter()
-            .map(|(n, a, h)| Command {
-                name: n.to_string(),
-                args: a.to_string(),
-                help: h.to_string(),
-                long: String::new(),
-                ext: None,
-            })
-            .collect();
-        for e in &harness.extensions {
-            for c in e.commands().into_iter().filter(|c| c.panel) {
-                commands.push(Command {
-                    name: format!("/{}", c.name),
-                    args: String::new(),
-                    help: c.description,
-                    long: c.help,
-                    ext: Some(e.clone()),
-                });
-            }
-        }
-        for c in &harness.commands {
-            if !commands.iter().any(|b| b.name == format!("/{}", c.name)) {
-                commands.push(Command {
-                    name: format!("/{}", c.name),
-                    args: String::new(),
-                    help: c.description.clone(),
-                    long: String::new(),
-                    ext: None,
-                });
-            }
-        }
-        // Help that extensions give for their prompt commands.
-        for e in &harness.extensions {
-            for c in e.commands().into_iter().filter(|c| !c.panel) {
-                if let Some(cmd) = commands.iter_mut().find(|x| x.name == format!("/{}", c.name)) {
-                    cmd.long = c.help;
-                }
-            }
-        }
+        let commands = command_list(&harness);
         let level = saved.actions.min(2);
         let mut app = Self {
             tx,
@@ -394,9 +395,6 @@ impl App {
             tick: 0,
             quit: false,
         };
-        if app.saved.small.is_some() {
-            app.harness.set_small_model(app.saved.small.clone());
-        }
         for p in app.harness.problems.clone() {
             app.error(format!("config: {p}"));
         }
@@ -719,7 +717,6 @@ impl App {
         match role {
             ModelRole::Code => self.model.as_ref().map(|m| m.key()),
             ModelRole::Think => self.saved.think.clone(),
-            ModelRole::Small => self.saved.small.clone(),
         }
     }
 
@@ -732,10 +729,6 @@ impl App {
         match role {
             ModelRole::Code => return,
             ModelRole::Think => self.saved.think = key.clone(),
-            ModelRole::Small => {
-                self.saved.small = key.clone();
-                self.harness.set_small_model(key.clone());
-            }
         }
         self.saved.save();
         let what = key.map(|k| self.model_name(&k)).unwrap_or_else(|| "the code model".into());
@@ -1421,7 +1414,7 @@ impl App {
         }
         let input = match text.strip_prefix('/').and_then(|t| {
             let (name, args) = t.split_once(char::is_whitespace).unwrap_or((t, ""));
-            self.harness.commands.iter().any(|c| c.name == name).then(|| (name.to_string(), args.trim().to_string()))
+            self.harness.commands().iter().any(|c| c.name == name).then(|| (name.to_string(), args.trim().to_string()))
         }) {
             Some((name, args)) => Input::Command { name, args },
             None => Input::Prompt(text.clone()),
@@ -1598,6 +1591,9 @@ impl App {
             secs: Some(t.started.elapsed().as_secs()),
         }));
         self.refresh_git();
+        // Picks up commands and skills the turn wrote.
+        self.harness.reload();
+        self.commands = command_list(&self.harness);
         if !self.queued.is_empty() {
             let next = self.queued.remove(0);
             self.send(next);
@@ -1954,7 +1950,8 @@ impl App {
                         if available.is_empty() { "none".into() } else { available.join(", ") },
                         if running.is_empty() { String::new() } else { format!("; running: {}", running.join(", ")) }
                     ));
-                    let skills: Vec<&str> = h.skills.iter().map(|s| s.name.as_str()).collect();
+                    let skills = h.skills();
+                    let skills: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
                     lines
                         .push(format!("Skills: {}", if skills.is_empty() { "none".into() } else { skills.join(", ") }));
                     let files: Vec<String> =
@@ -1966,10 +1963,6 @@ impl App {
                     lines.push(session);
                     let _ = tx.send(AppEvent::Status(lines));
                 });
-            }
-            ("/refresh", _) => {
-                self.refresh_models();
-                self.notice("Reloading model lists...");
             }
             ("/help", _) => {
                 let mut lines: Vec<String> =
@@ -1995,7 +1988,7 @@ impl App {
                     return true;
                 }
                 let bare = name.trim_start_matches('/');
-                if self.harness.commands.iter().any(|c| c.name == bare) {
+                if self.harness.commands().iter().any(|c| c.name == bare) {
                     return false;
                 }
                 self.notice(format!("Unknown command {name}. Type /help."));

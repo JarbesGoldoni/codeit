@@ -30,10 +30,7 @@ pub fn builtin() -> Vec<Command> {
         model: None,
         subtask: false,
     };
-    vec![
-        cmd("init", "create or update AGENTS.md for this project", include_str!("prompts/init.md")),
-        cmd("review", "review uncommitted changes, a commit, a branch or a PR", include_str!("prompts/review.md")),
-    ]
+    vec![cmd("review", "review uncommitted changes, a commit, a branch or a PR", include_str!("prompts/review.md"))]
 }
 
 /// Every command, later sources overriding earlier ones with the same name.

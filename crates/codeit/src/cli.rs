@@ -247,7 +247,7 @@ async fn run_once(args: &[&str]) -> Result<()> {
     let text = prompt.join(" ");
     let input = match text.strip_prefix('/').and_then(|t| {
         let (name, args) = t.split_once(' ').unwrap_or((t, ""));
-        harness.commands.iter().any(|c| c.name == name).then(|| (name.to_string(), args.to_string()))
+        harness.commands().iter().any(|c| c.name == name).then(|| (name.to_string(), args.to_string()))
     }) {
         Some((name, args)) => Input::Command { name, args },
         None => Input::Prompt(text),

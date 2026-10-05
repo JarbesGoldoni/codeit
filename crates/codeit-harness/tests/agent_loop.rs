@@ -418,3 +418,25 @@ async fn language_server_answers_and_reports_errors_after_edits() {
     assert!(after_edit.contains("<diagnostics file=\"m.c\">") && after_edit.contains("sub"), "{after_edit}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn picks_up_commands_and_skills_written_after_startup() {
+    let dir = temp_project();
+    let (h, _) = setup(&dir, Scripted::new(vec![])).await;
+    assert!(h.skills().iter().any(|s| s.name == "customize-codeit"));
+    assert!(!h.commands().iter().any(|c| c.name == "hello"));
+    std::fs::create_dir_all(dir.join(".codeit/commands")).unwrap();
+    std::fs::write(dir.join(".codeit/commands/hello.md"), "---\ndescription: greet\n---\nSay hi to $1.\n").unwrap();
+    std::fs::create_dir_all(dir.join(".codeit/skills/notes")).unwrap();
+    std::fs::write(
+        dir.join(".codeit/skills/notes/SKILL.md"),
+        "---\nname: notes\ndescription: take notes\n---\nWrite.\n",
+    )
+    .unwrap();
+    h.reload();
+    let hello = h.commands().into_iter().find(|c| c.name == "hello").expect("command loaded");
+    assert_eq!(hello.description, "greet");
+    assert!(h.skills().iter().any(|s| s.name == "notes"));
+    assert!(h.skills().iter().any(|s| s.name == "customize-codeit"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

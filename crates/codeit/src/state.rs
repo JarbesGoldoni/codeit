@@ -16,10 +16,6 @@ pub struct State {
     /// Model for the plan agent and code reviews (default: `model`).
     #[serde(default)]
     pub think: Option<String>,
-    /// Model for helper calls: condensing long output, summaries (default: the config's
-    /// `small_model`, else the session's model).
-    #[serde(default)]
-    pub small: Option<String>,
 }
 
 fn list() -> usize {
@@ -32,7 +28,7 @@ fn path() -> std::path::PathBuf {
 
 impl Default for State {
     fn default() -> Self {
-        Self { model: None, effort: None, approval: Approval::default(), actions: 1, think: None, small: None }
+        Self { model: None, effort: None, approval: Approval::default(), actions: 1, think: None }
     }
 }
 

@@ -78,8 +78,9 @@ pub struct Harness {
     pub problems: Vec<String>,
     pub providers: Vec<Arc<dyn Provider>>,
     pub agents: Vec<Agent>,
-    pub skills: Vec<Skill>,
-    pub commands: Vec<Command>,
+    /// Re-read from disk by `reload`, so new ones work without a restart.
+    skills: Mutex<Vec<Skill>>,
+    commands: Mutex<Vec<Command>>,
     pub extensions: Vec<Arc<dyn Extension>>,
     pub mcp: Arc<Mcp>,
     pub lsp: Arc<lsp::Lsp>,
@@ -124,8 +125,8 @@ impl Harness {
             problems,
             providers,
             agents,
-            skills,
-            commands,
+            skills: Mutex::new(skills),
+            commands: Mutex::new(commands),
             extensions,
             mcp,
             lsp: Arc::default(),
@@ -136,6 +137,21 @@ impl Harness {
             small_model: Mutex::new(small_model),
             review: Mutex::new(None),
         })
+    }
+
+    pub fn skills(&self) -> Vec<Skill> {
+        self.skills.lock().unwrap().clone()
+    }
+
+    pub fn commands(&self) -> Vec<Command> {
+        self.commands.lock().unwrap().clone()
+    }
+
+    /// Reads skills and prompt commands again, picking up ones written since startup.
+    pub fn reload(&self) {
+        let project_dirs = config::dirs_between(&self.root, &self.cwd);
+        *self.skills.lock().unwrap() = skill::discover(&skill::roots(&project_dirs, &self.config.skills.paths));
+        *self.commands.lock().unwrap() = command::discover(&project_dirs, &self.config);
     }
 
     pub fn provider(&self, id: &str) -> Result<Arc<dyn Provider>> {
@@ -227,7 +243,7 @@ impl Harness {
             tools::output_dir().to_string_lossy().into_owned(),
             std::env::temp_dir().to_string_lossy().into_owned(),
         ];
-        v.extend(self.skills.iter().map(|s| s.dir().to_string_lossy().into_owned()));
+        v.extend(self.skills().iter().filter(|s| s.text.is_none()).map(|s| s.dir().to_string_lossy().into_owned()));
         v
     }
 

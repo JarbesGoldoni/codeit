@@ -2,7 +2,7 @@
 //! prompt lists them; the skill tool loads one's instructions when a task matches.
 //!
 //! Found in `.codeit/skills`, `~/.config/codeit/skills`, the opencode, Claude and `.agents` skill
-//! folders (project and global), and the paths in `skills.paths`.
+//! folders (project and global), and the paths in `skills.paths`. `customize-codeit` is built in.
 
 use std::path::{Path, PathBuf};
 
@@ -14,6 +14,8 @@ pub struct Skill {
     pub description: String,
     /// The SKILL.md file.
     pub path: PathBuf,
+    /// A built-in skill's instructions; it has no folder.
+    pub text: Option<&'static str>,
 }
 
 impl Skill {
@@ -23,6 +25,9 @@ impl Skill {
 
     /// The instructions (the file without its frontmatter).
     pub fn body(&self) -> String {
+        if let Some(t) = self.text {
+            return t.to_string();
+        }
         std::fs::read_to_string(&self.path).map(|t| util::frontmatter(&t).1).unwrap_or_default()
     }
 }
@@ -48,8 +53,18 @@ pub fn roots(project_dirs: &[PathBuf], extra: &[String]) -> Vec<PathBuf> {
     out
 }
 
+/// Skills that come with codeit; a skill on disk with the same name replaces one.
+fn builtin() -> Vec<Skill> {
+    vec![Skill {
+        name: "customize-codeit".into(),
+        description: "Customize codeit itself: add /commands, skills, agents, MCP servers, permissions, instructions or settings.".into(),
+        path: PathBuf::new(),
+        text: Some(include_str!("prompts/customize.md")),
+    }]
+}
+
 pub fn discover(roots: &[PathBuf]) -> Vec<Skill> {
-    let mut skills: Vec<Skill> = Vec::new();
+    let mut skills = builtin();
     for root in roots {
         if !root.is_dir() {
             continue;
@@ -65,7 +80,7 @@ pub fn discover(roots: &[PathBuf]) -> Vec<Skill> {
             let Some(name) = fields.get("name").cloned().or(dir_name) else { continue };
             let description = fields.get("description").cloned().unwrap_or_default();
             skills.retain(|s| s.name != name);
-            skills.push(Skill { name, description, path: entry.path().to_path_buf() });
+            skills.push(Skill { name, description, path: entry.path().to_path_buf(), text: None });
         }
     }
     skills.sort_by(|a, b| a.name.cmp(&b.name));

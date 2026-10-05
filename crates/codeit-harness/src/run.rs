@@ -116,10 +116,9 @@ impl Run {
             Input::Command { name, args } => {
                 let cmd = self
                     .harness
-                    .commands
-                    .iter()
+                    .commands()
+                    .into_iter()
                     .find(|c| c.name == name)
-                    .cloned()
                     .ok_or_else(|| anyhow!("unknown command /{name}"))?;
                 let text =
                     crate::command::run_shell(&crate::command::render(&cmd.template, &args), &self.harness.cwd).await;

@@ -31,7 +31,7 @@ pub fn system(h: &Harness, agent: &Agent, model_key: &str, rules: &Ruleset) -> S
         parts.push(i);
     }
     if !rules.disabled("skill")
-        && let Some(s) = skill::prompt(&h.skills)
+        && let Some(s) = skill::prompt(&h.skills())
     {
         parts.push(s);
     }

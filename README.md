@@ -62,7 +62,7 @@ In the TUI, describe a task and codeit works on it: you see its thinking, its ac
 - **@path** in a message attaches that file (or folder listing); an image file (PNG, JPEG, GIF, WebP, up to 5 MB) is attached as an image.
 - **Images**: ctrl+v, alt+v or `/paste` attaches the screenshot in the clipboard (on WSL, the Windows clipboard; if Windows Terminal keeps ctrl+v for itself, use alt+v or `/paste`). Pasting or dropping an image file's path attaches it too. `read` on an image gives the model the image. Models that can't see images get a note instead, and images older than the last two turns are dropped from the context.
 - **/undo** removes the last turn and restores the files it changed. In a git project that includes what its shell commands changed (created, edited, deleted): codeit snapshots the files before and after each turn in a separate repository under `~/.local/share/codeit/snapshot/`, never touching yours, and `.gitignore` applies. A file you changed after the turn is left alone and named. Outside git, the edits codeit made itself are restored. **/session** resumes an earlier session. **/compact** summarizes the conversation to free context (codeit also does this on its own when the context is nearly full).
-- **/init** writes or improves an `AGENTS.md` for the project.
+- **Customize codeit by asking.** "Make a /deploy command that..." or "add a skill for our API": the built-in `customize-codeit` skill tells the agent where commands, skills, agents and settings go. New commands and skills work after that turn, without a restart.
 - **/review** opens the review screen (see Code review).
 - **/approvals ask** makes codeit ask before every edit, command (other than read-only ones like `ls` or `git status`) and web fetch. The default, **auto**, is opencode's: it only asks before touching files outside the project, reading `.env` files, or repeating the same call three times.
 
@@ -120,7 +120,7 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 
 | Command | Action |
 |---|---|
-| `/models` | pick a model per role: **code** (build agent), **think** (plan agent, reviews), **small** (condensing, summaries); think and small default to the code model |
+| `/models` | pick a model per role: **code** (build agent) and **think** (plan agent, reviews); think defaults to the code model |
 | `/effort [level\|default]` | choose the reasoning effort in a popup, or set it directly |
 | `/agent [name]` | switch agent |
 | `/new` | start a new session |
@@ -132,13 +132,11 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 | `/copy` | copy codeit's last answer to the clipboard (pbcopy, clip.exe, wl-copy, xclip or xsel; otherwise the terminal's OSC 52, which works over SSH) |
 | `/export [path]` | save this session as Markdown (default `~/.local/share/codeit/exports/`) |
 | `/review [target]` | open the review screen on your uncommitted changes, a branch (`/review main`: this branch's changes since main), a commit, or a PR (`/review pr 12`, `#12` or its URL, through `gh`) |
-| `/init` | write or improve AGENTS.md |
 | `/<your command> [args]` | run a custom prompt command (see Commands) |
 | `/login [provider]` | log in to a provider (the popup lists them, ● logged in) |
 | `/logout <provider>` | remove a login codeit saved |
 | `/status` | logins, MCP servers, language servers, skills, instruction files, session |
 | `/mcp [login\|logout\|reconnect name]` | MCP servers and their state; log in to one that uses OAuth |
-| `/refresh` | reload the model lists |
 | `/help` | list commands and keys |
 | `/exit` | exit codeit |
 
@@ -212,7 +210,7 @@ After every edit, the language servers that handle the file report its errors ba
 - When the context nears the model's limit, the older part of the conversation is replaced by a structured summary (objective, decisions, done and pending work, relevant files), and the most recent turns are kept as they are.
 - Session titles come from your first message, not from a model call.
 - On Copilot, only the requests you type count as premium requests: tool follow-ups, subagents, summaries and condensing are sent as `x-initiator: agent`, as opencode and VS Code do.
-- Summaries and condensing use the **small** model (`/models`, or `small_model` in the config) when its context can hold the input, else the session's model.
+- Summaries and condensing use the **small** model (`small_model` in the config) when its context can hold the input, else the session's model.
 
 ### Agents
 
@@ -233,8 +231,8 @@ Rules are the same as opencode's: a permission (a tool name, or `edit` for every
 ### Context the model gets
 
 - **Instructions.** `AGENTS.md` from the project root down to the working directory (or `CLAUDE.md` where there is none), a global `~/.config/codeit/AGENTS.md` (or opencode's, or `~/.claude/CLAUDE.md`), and the files, globs or URLs listed in `instructions`.
-- **Skills.** `SKILL.md` files in `.codeit/skills/`, `~/.config/codeit/skills/`, opencode's, Claude's and `.agents` skill folders, and `skills.paths`. Each skill's name and description are listed in the system prompt, and the model loads the full skill when a task matches. Your existing opencode and Claude skills work as they are.
-- **Commands.** Markdown prompt templates in `.codeit/commands/`, `~/.config/codeit/commands/`, opencode's and Claude's command folders, and the `command` config key. `$ARGUMENTS`, `$1`, `$2`… are replaced, `` !`cmd` `` becomes the command's output, frontmatter can set `description`, `agent`, `model` and `subtask` (run it in a subagent).
+- **Skills.** `SKILL.md` files in `.codeit/skills/`, `~/.config/codeit/skills/`, opencode's, Claude's and `.agents` skill folders, and `skills.paths`. Each skill's name and description are listed in the system prompt, and the model loads the full skill when a task matches. Your existing opencode and Claude skills work as they are. One is built in, `customize-codeit` (a skill with the same name replaces it).
+- **Commands.** Markdown prompt templates in `.codeit/commands/`, `~/.config/codeit/commands/`, opencode's and Claude's command folders, and the `command` config key. `$ARGUMENTS`, `$1`, `$2`… are replaced, `` !`cmd` `` becomes the command's output, frontmatter can set `description`, `agent`, `model` and `subtask` (run it in a subagent). Command and skill files are read again after each turn, so new ones work without a restart; config keys, agents and MCP servers are read at startup.
 - **MCP servers.** Local (stdio) and remote servers from the `mcp` config key, in opencode's format. Remote servers speak streamable HTTP, or the older HTTP+SSE transport (used when the URL ends in `/sse`, or when a server refuses streamable HTTP). A remote server without an `Authorization` header that asks for OAuth shows as "needs a login" in `/mcp`; `/mcp login <name>` opens the browser, registers codeit with the server's authorization server, and stores the tokens (refreshed automatically) in `~/.local/share/codeit/mcp-auth.json`, mode 600. `/mcp logout <name>` forgets them. Images MCP tools return go to the model. Their tools are offered as `<server>_<tool>` and their instructions join the system prompt. They connect in the background; `/status` shows them.
 - **The environment.** Working directory, git root, platform (WSL is detected), date and model.
 
@@ -251,7 +249,7 @@ It can also add slash commands that open a **panel**. The extension answers each
 ```jsonc
 {
   "model": "copilot/claude-sonnet-5",
-  "small_model": "copilot/gpt-5-mini",   // condensing and summaries (/models in the TUI overrides it)
+  "small_model": "copilot/gpt-5-mini",   // condensing and summaries (default: the session's model)
   "permission": {
     "bash": { "*": "ask", "git status*": "allow", "cargo test*": "allow" },
     "edit": "allow",
