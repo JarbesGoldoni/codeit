@@ -93,7 +93,7 @@ impl Run {
             .unwrap()
             .model
             .clone()
-            .ok_or_else(|| anyhow!("No model selected. Pick one with /model."))?;
+            .ok_or_else(|| anyhow!("No model selected. Pick one with /models."))?;
         let (pid, mid) = codeit_providers::split_key(&key).ok_or_else(|| anyhow!("bad model key `{key}`"))?;
         Ok((key.clone(), self.harness.provider(pid)?, mid.to_string()))
     }

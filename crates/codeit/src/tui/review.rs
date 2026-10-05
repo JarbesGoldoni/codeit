@@ -301,7 +301,7 @@ impl App {
     fn start_review_run(&mut self) {
         let Some(model) = self.model_for("plan") else {
             if let Some(v) = &mut self.review {
-                v.status = Some("Pick a model first (/model, or a think model with /roles).".into());
+                v.status = Some("Pick a model first (/models).".into());
             }
             return;
         };
@@ -309,7 +309,7 @@ impl App {
         let request = v.review.lock().unwrap().request();
         let effort = self.effort.clone().filter(|e| model.efforts.contains(e));
         let mut s = Session::new(&self.harness.cwd, "review", Some(model.key()), effort);
-        // Linked to the review, so it doesn't show up in /sessions.
+        // Linked to the review, so it doesn't show up in /session.
         s.parent = Some(format!("review:{}", v.review.lock().unwrap().id));
         self.next_turn += 1;
         let id = self.next_turn;

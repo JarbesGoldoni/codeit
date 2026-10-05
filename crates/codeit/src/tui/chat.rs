@@ -323,7 +323,10 @@ pub fn rows(app: &App, w: usize) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::new();
     let items = &app.items;
     if items.is_empty() {
-        out.push((Line::from("  Describe a task to start. /model picks a model, /login adds a provider.".dim()), None));
+        out.push((
+            Line::from("  Describe a task to start. /models picks a model, /login adds a provider.".dim()),
+            None,
+        ));
         out.push((Line::from("  /help lists commands; tab switches between build and plan (read-only).".dim()), None));
         return out;
     }

@@ -129,7 +129,7 @@ pub enum Catalog {
     Failed(String),
 }
 
-/// What each model is used for (`/roles`).
+/// What each model is used for (`/models`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelRole {
     /// The build agent: the main model.
@@ -213,8 +213,7 @@ pub struct Command {
 }
 
 const BUILTIN: &[(&str, &str, &str)] = &[
-    ("/model", "", "pick the main (code) model"),
-    ("/roles", "", "pick the think and small models too"),
+    ("/models", "", "pick the code, think and small models"),
     ("/effort", "[level]", "choose the reasoning effort (ctrl+t cycles)"),
     ("/agent", "[name]", "switch agent: build or plan (tab cycles)"),
     ("/new", "", "start a new session"),
@@ -233,7 +232,7 @@ const BUILTIN: &[(&str, &str, &str)] = &[
     ("/status", "", "logins, MCP servers, skills, session"),
     ("/refresh", "", "reload the model lists"),
     ("/help", "", "list commands and keys"),
-    ("/quit", "", "exit codeit"),
+    ("/exit", "", "exit codeit"),
 ];
 
 pub struct Turn {
@@ -694,7 +693,7 @@ impl App {
     /// Opens the effort popup on the current level.
     fn open_effort(&mut self) {
         let Some(m) = &self.model else {
-            self.notice("No model yet: pick one with /model.");
+            self.notice("No model yet: pick one with /models.");
             return;
         };
         if m.efforts.is_empty() {
@@ -1021,7 +1020,7 @@ impl App {
                     match picker.kind {
                         PickerKind::Key(c) => match crate::login::save_key(&c.id, &text) {
                             Ok(()) => {
-                                self.notice(format!("Saved the {} key. Its models are in /model.", c.name));
+                                self.notice(format!("Saved the {} key. Its models are in /models.", c.name));
                                 self.refresh_models();
                             }
                             Err(e) => self.error(format!("{e:#}")),
@@ -1754,11 +1753,7 @@ impl App {
         let args: Vec<&str> = parts.collect();
         let idle = !self.busy();
         match (name, args.as_slice()) {
-            ("/model", rest) => {
-                self.picker =
-                    Some(Picker { kind: PickerKind::Model(ModelRole::Code), filter: rest.join(" "), selected: 0 });
-            }
-            ("/roles" | "/models", _) => self.picker = Some(picker_with(PickerKind::Roles)),
+            ("/models", _) => self.picker = Some(picker_with(PickerKind::Roles)),
             ("/review", rest) => self.open_review(&rest.join(" ")),
             ("/paste", _) => self.paste_image(),
             ("/copy", _) => self.copy_last(),
@@ -1845,11 +1840,11 @@ impl App {
                     self.notice(format!("Agents: {}", names.join(", ")));
                 }
             }
-            ("/new" | "/clear", _) => {
+            ("/new", _) => {
                 self.interrupt();
                 self.new_session();
             }
-            ("/session" | "/sessions" | "/resume", _) if idle => {
+            ("/session", _) if idle => {
                 let list = Session::list(Some(&self.harness.cwd));
                 if list.is_empty() {
                     self.notice("No saved sessions in this folder yet.");
@@ -1981,17 +1976,17 @@ impl App {
                     self.commands.iter().map(|c| format!("{:<12} {:<26} {}", c.name, c.args, c.help)).collect();
                 lines.push(String::new());
                 lines.push(
-                    "enter send · shift+enter or ctrl+j newline · tab switch agent · ctrl+t effort · esc interrupt"
+                    "enter send · shift+enter or ctrl+j newline · tab switch agent · ctrl+t effort · esc stops the answer"
                         .into(),
                 );
                 lines.push("↑↓ (empty input) select an action · enter opens or closes it · esc esc edits your last message".into());
                 lines.push(
-                    "ctrl+o actions folded/list/open · pgup/pgdn scroll · @path attaches a file · ctrl+c quit".into(),
+                    "ctrl+o actions folded/list/open · pgup/pgdn scroll · @path attaches a file · ctrl+c stops or quits · /exit quits".into(),
                 );
                 self.notice(lines.join("\n"));
             }
-            ("/quit" | "/exit", _) => self.quit = true,
-            ("/session" | "/sessions" | "/resume" | "/undo" | "/compact", _) => {
+            ("/exit", _) => self.quit = true,
+            ("/session" | "/undo" | "/compact", _) => {
                 self.notice("Wait for the current turn to finish (esc interrupts).")
             }
             _ => {

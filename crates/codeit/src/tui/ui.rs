@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap},
 };
 
-use super::app::{App, Catalog, Dialog, ModelRole, PickerKind, duration, tokens};
+use super::app::{App, Catalog, Dialog, PickerKind, duration, tokens};
 use super::style::{AGENT, BLUE, SELECT, cut, meter, right, wrap};
 use codeit_harness::session::Approval;
 
@@ -180,7 +180,7 @@ fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
     left.push(format!("  tab agent · ctrl+o actions: {} · /help", super::chat::LEVELS[app.level]).dim());
     let model = match &app.model {
         Some(m) => format!("{}{} ", m.key(), app.effort.as_ref().map(|e| format!(" · {e}")).unwrap_or_default()),
-        None => "no model: /model ".into(),
+        None => "no model: /models ".into(),
     };
     f.render_widget(right(left, vec![model.dim()], area.width as usize), area);
 }
@@ -285,9 +285,8 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
     let [input, list] = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(popup);
 
     let (title, secret, help): (String, bool, Option<String>) = match &picker.kind {
-        PickerKind::Model(ModelRole::Code) => (" /model ".into(), false, None),
-        PickerKind::Model(role) => (format!(" /roles · {} model: {} ", role.name(), role.purpose()), false, None),
-        PickerKind::Roles => (" /roles ".into(), false, None),
+        PickerKind::Model(role) => (format!(" /models · {} model: {} ", role.name(), role.purpose()), false, None),
+        PickerKind::Roles => (" /models ".into(), false, None),
         PickerKind::Session(_) => (" /session ".into(), false, None),
         PickerKind::Login(_) => (" /login ".into(), false, None),
         PickerKind::LoginMethod(c) => (format!(" /login · {} ", c.name), false, None),

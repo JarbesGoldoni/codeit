@@ -9,7 +9,7 @@ What it adds:
 - **A calm, readable UI.** Your messages and the answers in bubbles, thinking in gray, actions in a faint frame, a side bubble with the context used and your branch, and popups for models, sessions and effort.
 - **Light.** One native binary of about 18 MB, with no Node or Bun runtime behind it.
 
-codeit reads, searches and edits code, runs commands, plans, delegates to subagents, asks before risky actions, and keeps sessions you can resume and undo. It reviews diffs like a pull request (`/review`) and uses a cheaper model to condense long tool output (`/roles`).
+codeit reads, searches and edits code, runs commands, plans, delegates to subagents, asks before risky actions, and keeps sessions you can resume and undo. It reviews diffs like a pull request (`/review`) and uses a cheaper model to condense long tool output (`/models`).
 
 It runs on macOS, Linux and Windows (through WSL).
 
@@ -83,7 +83,7 @@ In the TUI, describe a task and codeit works on it: you see its thinking, its ac
    codeit run -m copilot/claude-sonnet-5 -c "now add a test file for add and run it with python3"
    ```
    You should see `→ read calc.py`, `→ edit calc.py`, `→ bash ...` lines, then the answer. Try one model from each Copilot family, since each uses a different API: a GPT-4 class model (`/chat/completions`), a GPT-5 class model (`/responses`, which edits with `apply_patch`), and a Claude model (`/v1/messages`).
-3. **The TUI**, in the same folder: `codeit`. Pick a model with `/model`, ask for a change, watch the diff, then `/undo` it. Press Tab for plan mode and ask for a plan. Run `/approvals ask` and ask for an edit to see the permission prompt. Quit and come back with `codeit -c`.
+3. **The TUI**, in the same folder: `codeit`. Pick a model with `/models`, ask for a change, watch the diff, then `/undo` it. Press Tab for plan mode and ask for a plan. Run `/approvals ask` and ask for an edit to see the permission prompt. Quit and come back with `codeit -c`.
 
 If something fails, rerun it with `CODEIT_DEBUG=1` and open an issue with the error printed on screen and the relevant part of `~/.cache/codeit/debug.log`. The log never contains tokens. Add `CODEIT_DEBUG_BODY=1` to also log request bodies, which include your prompts and file contents.
 
@@ -106,22 +106,21 @@ Actions show at one of three levels, Ctrl+O cycles them (remembered): **folded**
 | ↑ / ↓ while typing a `/` command | move through the matching commands; Enter runs the highlighted one |
 | Tab | complete the highlighted `/` command; otherwise switch agent (build ↔ plan) |
 | Ctrl+T | cycle the reasoning effort (default → each level the model supports) |
-| Esc | interrupt |
+| Esc | stop the current answer |
 | ↑ / ↓ (empty input) | select an action or a folded group (↑ first takes back a queued message) |
 | Enter on a selected action | show its whole output, or close it; on a folded group, unfold it |
 | Esc Esc (empty input) | edit your last message; sending it rewinds the conversation (and the files) to before it |
 | Ctrl+O | actions folded, as a list, or open (remembered) |
 | PgUp / PgDn, mouse wheel | scroll the history (the wheel also moves through the review screen, panels and popups; select text with Shift+drag, or turn the mouse off with `"tui": {"mouse": false}`) |
-| Ctrl+C | interrupt, then clear the input, then quit |
+| Ctrl+C | stop the answer, then clear the input, then quit |
 
 In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` no and say what to do instead, Esc no.
 
-`/model`, `/roles`, `/session` and `/login` open a popup in the middle, like a command palette: type to filter, ↑↓ to move, Enter to choose, Esc to close.
+`/models`, `/session` and `/login` open a popup in the middle, like a command palette: type to filter, ↑↓ to move, Enter to choose, Esc to close.
 
 | Command | Action |
 |---|---|
-| `/model [filter]` | pick the main (code) model |
-| `/roles` | pick a model per role: **code** (build agent), **think** (plan agent, reviews), **small** (condensing, summaries); think and small default to the code model |
+| `/models` | pick a model per role: **code** (build agent), **think** (plan agent, reviews), **small** (condensing, summaries); think and small default to the code model |
 | `/effort [level\|default]` | choose the reasoning effort in a popup, or set it directly |
 | `/agent [name]` | switch agent |
 | `/new` | start a new session |
@@ -140,13 +139,14 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 | `/status` | logins, MCP servers, language servers, skills, instruction files, session |
 | `/mcp [login\|logout\|reconnect name]` | MCP servers and their state; log in to one that uses OAuth |
 | `/refresh` | reload the model lists |
-| `/help`, `/quit` | |
+| `/help` | list commands and keys |
+| `/exit` | exit codeit |
 
 ## Code review
 
 `/review` shows a diff like a pull request: the changed files on the right (with their comment counts), the selected file's diff in the middle, and comments under the lines they are about.
 
-- **r** has codeit review it. The `review` agent runs on the **think** model (`/roles`), reads the diff and the surrounding code, and leaves comments on lines with a severity (`bug`, `risk`, `question`, `nit`); it can't edit anything. Its overall assessment shows at the top. Comments can only go on lines in the diff, so they always line up.
+- **r** has codeit review it. The `review` agent runs on the **think** model (`/models`), reads the diff and the surrounding code, and leaves comments on lines with a severity (`bug`, `risk`, `question`, `nit`); it can't edit anything. Its overall assessment shows at the top. Comments can only go on lines in the diff, so they always line up.
 - **a** agree, **d** dismiss, **o** reopen, **D** delete the comment under the cursor; **c** writes your own comment on the selected line.
 - **f** sends the agreed comments to the build agent to fix, and goes back to the conversation.
 - **e** exports the review as Markdown (agreed, then open comments), for example to send to a colleague.
@@ -212,7 +212,7 @@ After every edit, the language servers that handle the file report its errors ba
 - When the context nears the model's limit, the older part of the conversation is replaced by a structured summary (objective, decisions, done and pending work, relevant files), and the most recent turns are kept as they are.
 - Session titles come from your first message, not from a model call.
 - On Copilot, only the requests you type count as premium requests: tool follow-ups, subagents, summaries and condensing are sent as `x-initiator: agent`, as opencode and VS Code do.
-- Summaries and condensing use the **small** model (`/roles`, or `small_model` in the config) when its context can hold the input, else the session's model.
+- Summaries and condensing use the **small** model (`/models`, or `small_model` in the config) when its context can hold the input, else the session's model.
 
 ### Agents
 
@@ -251,7 +251,7 @@ It can also add slash commands that open a **panel**. The extension answers each
 ```jsonc
 {
   "model": "copilot/claude-sonnet-5",
-  "small_model": "copilot/gpt-5-mini",   // condensing and summaries (/roles in the TUI overrides it)
+  "small_model": "copilot/gpt-5-mini",   // condensing and summaries (/models in the TUI overrides it)
   "permission": {
     "bash": { "*": "ask", "git status*": "allow", "cargo test*": "allow" },
     "edit": "allow",
