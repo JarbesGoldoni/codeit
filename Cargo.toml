@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT-0"
+repository = "https://github.com/JarbesGoldoni/codeit"
+
+[workspace.dependencies]
+codeit-providers = { path = "crates/codeit-providers" }
+codeit-harness = { path = "crates/codeit-harness" }
+anyhow = "1"
+async-trait = "0.1"
+dirs = "6"
+futures-util = "0.3"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots", "rustls-tls-webpki-roots", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs", "signal"] }
+uuid = { version = "1", features = ["v4"] }
+globset = "0.4"
+html2text = "0.17"
+ignore = "0.4"
+libc = "0.2"
+regex = "1"
+similar = "3"
+sha2 = "0.10"
+pulldown-cmark = { version = "0.13", default-features = false }
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+unicode-width = "0.2"
+tokio-util = "0.7"
