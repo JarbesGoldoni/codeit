@@ -297,9 +297,9 @@ impl App {
         }
     }
 
-    /// Has the review agent go through the diff, on the think model.
+    /// Has the review agent go through the diff, on the session's model.
     fn start_review_run(&mut self) {
-        let Some(model) = self.model_for("plan") else {
+        let Some(model) = self.model.clone() else {
             if let Some(v) = &mut self.review {
                 v.status = Some("Pick a model first (/models).".into());
             }

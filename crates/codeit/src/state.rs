@@ -13,9 +13,6 @@ pub struct State {
     /// How much of the agent's actions to show (ctrl+o): 0 folded, 1 list, 2 open.
     #[serde(default = "list")]
     pub actions: usize,
-    /// Model for the plan agent and code reviews (default: `model`).
-    #[serde(default)]
-    pub think: Option<String>,
 }
 
 fn list() -> usize {
@@ -28,7 +25,7 @@ fn path() -> std::path::PathBuf {
 
 impl Default for State {
     fn default() -> Self {
-        Self { model: None, effort: None, approval: Approval::default(), actions: 1, think: None }
+        Self { model: None, effort: None, approval: Approval::default(), actions: 1 }
     }
 }
 

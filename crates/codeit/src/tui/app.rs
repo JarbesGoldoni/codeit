@@ -131,34 +131,8 @@ pub enum Catalog {
     Failed(String),
 }
 
-/// What each model is used for (`/models`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModelRole {
-    /// The build agent: the main model.
-    Code,
-    /// The plan agent and code reviews.
-    Think,
-}
-
-impl ModelRole {
-    pub const ALL: [ModelRole; 2] = [ModelRole::Code, ModelRole::Think];
-    pub fn name(self) -> &'static str {
-        match self {
-            ModelRole::Code => "code",
-            ModelRole::Think => "think",
-        }
-    }
-    pub fn purpose(self) -> &'static str {
-        match self {
-            ModelRole::Code => "build agent: does the work",
-            ModelRole::Think => "plan agent and code reviews",
-        }
-    }
-}
-
 pub enum PickerKind {
-    Model(ModelRole),
-    Roles,
+    Model,
     Session(Vec<SessionMeta>),
     /// The providers to log in to (loading while `None`).
     Login(Option<Vec<crate::login::Choice>>),
@@ -211,7 +185,7 @@ pub struct Command {
 }
 
 const BUILTIN: &[(&str, &str, &str)] = &[
-    ("/models", "", "pick the code and think models"),
+    ("/models", "", "pick the model"),
     ("/effort", "[level]", "choose the reasoning effort (ctrl+t cycles)"),
     ("/agent", "[name]", "switch agent: build or plan (tab cycles)"),
     ("/new", "", "start a new session"),
@@ -642,22 +616,9 @@ impl App {
         let words: Vec<String> = p.filter.to_lowercase().split_whitespace().map(String::from).collect();
         let keep = |hay: &str| words.iter().all(|w| hay.to_lowercase().contains(w.as_str()));
         match &p.kind {
-            PickerKind::Roles => ModelRole::ALL
-                .iter()
-                .map(|r| {
-                    let model = match self.role_key(*r) {
-                        Some(k) => self.model_name(&k),
-                        None => "same as code".into(),
-                    };
-                    (format!("{:<7}{model}", r.name()), r.purpose().to_string(), false)
-                })
-                .collect(),
-            PickerKind::Model(role) => {
-                let current = self.role_key(*role);
+            PickerKind::Model => {
+                let current = self.model.as_ref().map(|m| m.key());
                 let mut rows: Vec<Row> = Vec::new();
-                if *role != ModelRole::Code && p.filter.is_empty() {
-                    rows.push(("(same as the code model)".into(), String::new(), current.is_none()));
-                }
                 rows.extend(
                     self.all_models().into_iter().filter(|m| keep(&format!("{} {} {}", m.provider, m.id, m.name))).map(
                         |m| {
@@ -738,35 +699,6 @@ impl App {
         self.saved.effort = self.effort.clone();
         self.saved.save();
         self.model = Some(m);
-    }
-
-    /// The model set for a role (`None`: the code model is used).
-    pub fn role_key(&self, role: ModelRole) -> Option<String> {
-        match role {
-            ModelRole::Code => self.model.as_ref().map(|m| m.key()),
-            ModelRole::Think => self.saved.think.clone(),
-        }
-    }
-
-    /// A model's display name, or its key if its provider hasn't answered yet.
-    pub fn model_name(&self, key: &str) -> String {
-        self.all_models().into_iter().find(|m| m.key() == key).map(|m| m.name).unwrap_or_else(|| key.to_string())
-    }
-
-    fn set_role(&mut self, role: ModelRole, key: Option<String>) {
-        match role {
-            ModelRole::Code => return,
-            ModelRole::Think => self.saved.think = key.clone(),
-        }
-        self.saved.save();
-        let what = key.map(|k| self.model_name(&k)).unwrap_or_else(|| "the code model".into());
-        self.notice(format!("{} model: {what}", role.name()));
-    }
-
-    /// The model a turn of `agent` runs on: the think model for plan, else the code model.
-    pub(super) fn model_for(&self, agent: &str) -> Option<ModelInfo> {
-        let think = (agent == "plan").then(|| self.saved.think.clone()).flatten();
-        think.and_then(|k| self.all_models().into_iter().find(|m| m.key() == k)).or_else(|| self.model.clone())
     }
 
     fn set_effort(&mut self, effort: Option<String>) {
@@ -1077,18 +1009,7 @@ impl App {
                 let words: Vec<String> = p.filter.to_lowercase().split_whitespace().map(String::from).collect();
                 let picker = self.picker.take().expect("picker is open");
                 match picker.kind {
-                    PickerKind::Roles => {
-                        if let Some(role) = ModelRole::ALL.get(selected) {
-                            self.picker = Some(picker_with(PickerKind::Model(*role)));
-                        }
-                    }
-                    PickerKind::Model(role) => {
-                        let clear_row = role != ModelRole::Code && words.is_empty();
-                        if clear_row && selected == 0 {
-                            self.set_role(role, None);
-                            return;
-                        }
-                        let selected = selected - clear_row as usize;
+                    PickerKind::Model => {
                         let models: Vec<ModelInfo> = self
                             .all_models()
                             .into_iter()
@@ -1098,9 +1019,8 @@ impl App {
                             })
                             .collect();
                         match models.into_iter().nth(selected) {
-                            Some(m) if role == ModelRole::Code => self.select_model(m),
-                            Some(m) => self.set_role(role, Some(m.key())),
-                            None => self.picker = Some(picker_with(PickerKind::Model(role))),
+                            Some(m) => self.select_model(m),
+                            None => self.picker = Some(picker_with(PickerKind::Model)),
                         }
                     }
                     PickerKind::Session(list) => {
@@ -1441,7 +1361,7 @@ impl App {
             self.input = text;
             self.cursor = self.input.len();
             self.notice("Pick a model first.");
-            self.picker = Some(picker_with(PickerKind::Model(ModelRole::Code)));
+            self.picker = Some(picker_with(PickerKind::Model));
             return;
         }
         let input = match text.strip_prefix('/').and_then(|t| {
@@ -1456,7 +1376,7 @@ impl App {
     }
 
     fn start(&mut self, input: Input) {
-        let Some(model) = self.model_for(&self.agent) else { return };
+        let Some(model) = self.model.clone() else { return };
         let effort = self.effort.clone().filter(|e| model.efforts.contains(e));
         {
             let mut s = self.session.lock().unwrap();
@@ -1782,7 +1702,7 @@ impl App {
         let args: Vec<&str> = parts.collect();
         let idle = !self.busy();
         match (name, args.as_slice()) {
-            ("/models", _) => self.picker = Some(picker_with(PickerKind::Roles)),
+            ("/models", _) => self.picker = Some(picker_with(PickerKind::Model)),
             ("/review", rest) => self.open_review(&rest.join(" ")),
             ("/paste", _) => self.paste_image(),
             ("/copy", _) => self.copy_last(),

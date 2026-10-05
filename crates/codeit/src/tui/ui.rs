@@ -292,8 +292,7 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
     let [input, list] = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(popup);
 
     let (title, secret, help): (String, bool, Option<String>) = match &picker.kind {
-        PickerKind::Model(role) => (format!(" /models · {} model: {} ", role.name(), role.purpose()), false, None),
-        PickerKind::Roles => (" /models ".into(), false, None),
+        PickerKind::Model => (" /models ".into(), false, None),
         PickerKind::Session(_) => (" /session ".into(), false, None),
         PickerKind::Login(_) => (" /login ".into(), false, None),
         PickerKind::LoginMethod(c) => (format!(" /login · {} ", c.name), false, None),
@@ -347,7 +346,7 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
     }
     let rows = app.picker_rows();
     let mut status: Vec<Line> = Vec::new();
-    if matches!(picker.kind, PickerKind::Model(_)) {
+    if matches!(picker.kind, PickerKind::Model) {
         let loading = app.catalogs.values().filter(|c| matches!(c, Catalog::Loading)).count();
         if loading > 0 {
             status.push(Line::from(format!("loading {loading} providers…").fg(Color::DarkGray)));

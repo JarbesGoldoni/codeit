@@ -120,7 +120,7 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 
 | Command | Action |
 |---|---|
-| `/models` | pick a model per role: **code** (build agent) and **think** (plan agent, reviews); think defaults to the code model |
+| `/models` | pick the model for this session |
 | `/effort [level\|default]` | choose the reasoning effort in a popup, or set it directly |
 | `/agent [name]` | switch agent |
 | `/new` | start a new session |
@@ -144,7 +144,7 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 
 `/review` shows a diff like a pull request: the changed files on the right (with their comment counts), the selected file's diff in the middle, and comments under the lines they are about.
 
-- **r** has codeit review it. The `review` agent runs on the **think** model (`/models`), reads the diff and the surrounding code, and leaves comments on lines with a severity (`bug`, `risk`, `question`, `nit`); it can't edit anything. Its overall assessment shows at the top. Comments can only go on lines in the diff, so they always line up.
+- **r** has codeit review it. The `review` agent runs on the session's model, reads the diff and the surrounding code, and leaves comments on lines with a severity (`bug`, `risk`, `question`, `nit`); it can't edit anything. Its overall assessment shows at the top. Comments can only go on lines in the diff, so they always line up.
 - **a** agree, **d** dismiss, **o** reopen, **D** delete the comment under the cursor; **c** writes your own comment on the selected line.
 - **f** sends the agreed comments to the build agent to fix, and goes back to the conversation.
 - **e** exports the review as Markdown (agreed, then open comments), for example to send to a colleague.
