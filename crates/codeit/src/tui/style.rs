@@ -15,6 +15,10 @@ pub const FAINT: Color = Color::Rgb(44, 44, 44);
 /// Failures, without shouting.
 pub const SOFT_RED: Color = Color::Rgb(170, 95, 95);
 pub const ADD: Color = Color::Rgb(110, 170, 110);
+/// Waiting on something.
+pub const SOFT_YELLOW: Color = Color::Rgb(190, 170, 95);
+/// Something is broken.
+pub const RED: Color = Color::Rgb(215, 75, 75);
 pub const SELECT: Color = Color::Rgb(44, 48, 66);
 pub const ADD_BG: Color = Color::Rgb(18, 48, 24);
 pub const DEL_BG: Color = Color::Rgb(60, 20, 20);

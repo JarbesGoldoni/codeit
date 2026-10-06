@@ -194,7 +194,7 @@ const BUILTIN: &[(&str, &str, &str)] = &[
     ("/effort", "[level]", "choose the reasoning effort (ctrl+t cycles)"),
     ("/agent", "[name]", "switch agent: build or plan (tab cycles)"),
     ("/new", "", "start a new session"),
-    ("/session", "", "resume an earlier session"),
+    ("/session", "", "switch sessions; a running one keeps working"),
     ("/undo", "", "undo the last turn and its file changes"),
     ("/compact", "", "summarize the conversation to free context"),
     ("/review", "[branch|commit|pr N]", "review a diff with codeit, comments on lines like a PR"),
@@ -267,6 +267,70 @@ pub struct Turn {
     pub agent: String,
 }
 
+/// A session's screen and its turn. The one on screen lives in `App`'s own fields; the others
+/// whose turn still runs (or waits for an answer) wait in `App::background`.
+pub struct View {
+    pub session: Arc<Mutex<Session>>,
+    items: Vec<Item>,
+    pub turn: Option<Turn>,
+    queued: Vec<String>,
+    pub dialog: Option<Dialog>,
+    asks: Vec<Ask>,
+    context: Option<(u64, u64)>,
+    model: Option<ModelInfo>,
+    effort: Option<String>,
+    agent: String,
+    approval: Approval,
+    rewind: Option<usize>,
+    selected: Option<String>,
+    open: HashSet<String>,
+    scroll: u16,
+    /// Deleted while its turn ran: deleted again once the turn has saved it for the last time.
+    deleted: bool,
+}
+
+impl View {
+    fn new(session: Session, model: Option<ModelInfo>) -> Self {
+        Self {
+            agent: session.agent.clone(),
+            approval: session.approval,
+            effort: session.effort.clone(),
+            session: Arc::new(Mutex::new(session)),
+            items: Vec::new(),
+            turn: None,
+            queued: Vec::new(),
+            dialog: None,
+            asks: Vec::new(),
+            context: None,
+            model,
+            rewind: None,
+            selected: None,
+            open: HashSet::new(),
+            scroll: 0,
+            deleted: false,
+        }
+    }
+
+    pub fn id(&self) -> String {
+        self.session.lock().unwrap().id.clone()
+    }
+
+    fn title(&self) -> String {
+        let s = self.session.lock().unwrap();
+        if s.title.is_empty() { "New session".into() } else { s.title.clone() }
+    }
+
+    /// Stops its turn and drops what waits for an answer.
+    fn stop(&mut self) {
+        if let Some(t) = &self.turn {
+            t.cancel.cancel();
+        }
+        self.queued.clear();
+        self.asks.clear();
+        self.dialog = None;
+    }
+}
+
 pub struct App {
     pub tx: UnboundedSender<AppEvent>,
     pub harness: Arc<Harness>,
@@ -311,6 +375,8 @@ pub struct App {
     pub panel: Option<super::panel::PanelView>,
     /// Messages typed while a turn runs; sent when it ends.
     pub queued: Vec<String>,
+    /// Sessions working (or waiting for an answer) while another one is on screen.
+    pub background: Vec<View>,
     /// (tokens used, usable) of the latest request.
     pub context: Option<(u64, u64)>,
     pub commands: Vec<Command>,
@@ -374,6 +440,7 @@ impl App {
             rewind: None,
             last_esc: None,
             queued: Vec::new(),
+            background: Vec::new(),
             context: None,
             commands,
             ext_status: Vec::new(),
@@ -488,6 +555,10 @@ impl App {
             AppEvent::Harness(turn, ev) => {
                 if self.turn.as_ref().is_some_and(|t| t.id == turn) {
                     self.harness_event(ev);
+                } else if let Some(i) =
+                    self.background.iter().position(|v| v.turn.as_ref().is_some_and(|t| t.id == turn))
+                {
+                    self.background_event(i, ev);
                 }
             }
             AppEvent::LoginChoices(list) => {
@@ -649,16 +720,29 @@ impl App {
                 list.iter()
                     .filter(|s| keep(&s.title))
                     .map(|s| {
-                        let detail = if deleting.as_ref() == Some(&s.id) {
-                            "ctrl+d again to delete".into()
+                        let live = if s.id == current {
+                            Some((self.turn.is_some(), self.dialog.is_some()))
                         } else {
-                            ago(s.updated)
+                            self.background.iter().find(|v| v.id() == s.id).map(|v| (true, v.dialog.is_some()))
+                        };
+                        let detail = match live {
+                            _ if deleting.as_ref() == Some(&s.id) => "ctrl+d again to delete".into(),
+                            Some((_, true)) => "waiting for you".into(),
+                            Some((true, _)) => "working…".into(),
+                            _ => ago(s.updated),
                         };
                         (s.title.clone(), detail, s.id == current)
                     })
                     .collect()
             }
-            PickerKind::Mcp => self.harness.mcp.list().into_iter().filter(|(name, ..)| keep(name)).collect(),
+            PickerKind::Mcp => self
+                .harness
+                .mcp
+                .list()
+                .into_iter()
+                .filter(|(name, ..)| keep(name))
+                .map(|(name, state, _)| (name, state, false))
+                .collect(),
             PickerKind::Login(None) => Vec::new(),
             PickerKind::Login(Some(list)) => list
                 .iter()
@@ -1678,23 +1762,85 @@ impl App {
     }
 
     fn resume(&mut self, id: &str) {
+        if self.session.lock().unwrap().id == id {
+            return;
+        }
+        if let Some(i) = self.background.iter().position(|v| v.id() == id) {
+            let v = self.background.remove(i);
+            self.show_view(v);
+            return;
+        }
         match Session::load(id) {
             Ok(s) => {
-                self.agent = s.agent.clone();
-                self.approval = s.approval;
-                self.effort = s.effort.clone();
-                let key = s.model.clone();
                 let title = s.title.clone();
-                self.session = Arc::new(Mutex::new(s));
-                if let Some(m) = key.and_then(|k| self.all_models().into_iter().find(|m| m.key() == k)) {
-                    self.model = Some(m);
-                }
-                self.context = None;
+                let model = s
+                    .model
+                    .as_ref()
+                    .and_then(|k| self.all_models().into_iter().find(|m| &m.key() == k))
+                    .or_else(|| self.model.clone());
+                self.show_view(View::new(s, model));
                 self.rebuild();
                 self.notice(format!("Resumed: {title}"));
             }
             Err(e) => self.error(format!("{e:#}")),
         }
+    }
+
+    /// Swaps the session on screen with `v`.
+    fn swap_view(&mut self, v: &mut View) {
+        use std::mem::swap;
+        swap(&mut self.session, &mut v.session);
+        swap(&mut self.items, &mut v.items);
+        swap(&mut self.turn, &mut v.turn);
+        swap(&mut self.queued, &mut v.queued);
+        swap(&mut self.dialog, &mut v.dialog);
+        swap(&mut self.asks, &mut v.asks);
+        swap(&mut self.context, &mut v.context);
+        swap(&mut self.model, &mut v.model);
+        swap(&mut self.effort, &mut v.effort);
+        swap(&mut self.agent, &mut v.agent);
+        swap(&mut self.approval, &mut v.approval);
+        swap(&mut self.rewind, &mut v.rewind);
+        swap(&mut self.selected, &mut v.selected);
+        swap(&mut self.open, &mut v.open);
+        v.scroll = self.scroll.replace(v.scroll);
+    }
+
+    /// Puts `v` on screen; the session it replaces keeps working in the background while its
+    /// turn runs.
+    fn show_view(&mut self, mut v: View) {
+        self.swap_view(&mut v);
+        if v.turn.is_some() {
+            self.background.push(v);
+        }
+    }
+
+    /// An event of a turn running in the background, handled as if its session were on screen.
+    fn background_event(&mut self, i: usize, ev: HEvent) {
+        let asked = matches!(ev, HEvent::Ask(_));
+        let mut v = self.background.remove(i);
+        self.swap_view(&mut v);
+        self.harness_event(ev);
+        self.swap_view(&mut v);
+        let title = v.title();
+        if v.turn.is_some() {
+            if asked {
+                self.notice(format!("“{title}” is waiting for your answer: /session to open it."));
+            }
+            self.background.insert(i, v);
+        } else if v.deleted {
+            Session::delete(&v.id());
+        } else {
+            self.notice(format!("“{title}” finished in the background: /session to open it."));
+        }
+    }
+
+    /// The live session with this id: the one on screen or one working in the background.
+    fn live_session(&self, id: &str) -> Option<Arc<Mutex<Session>>> {
+        std::iter::once(&self.session)
+            .chain(self.background.iter().map(|v| &v.session))
+            .find(|s| s.lock().unwrap().id == id)
+            .cloned()
     }
 
     /// Switches to the saved session of this folder whose title starts with `prefix`, or starts
@@ -1732,7 +1878,13 @@ impl App {
         }
         Session::delete(&meta.id);
         if self.session.lock().unwrap().id == meta.id {
+            self.interrupt();
             self.new_session();
+        }
+        // A running turn would save it again: stop it and delete it once it has.
+        if let Some(v) = self.background.iter_mut().find(|v| v.id() == meta.id) {
+            v.stop();
+            v.deleted = true;
         }
         list.retain(|s| s.id != meta.id);
         let p = self.picker.as_mut().expect("picker is open");
@@ -1764,14 +1916,14 @@ impl App {
                 let PickerKind::Rename(meta, mut list) = picker.kind else { return };
                 let title = picker.filter.trim().to_string();
                 if k.code == KeyCode::Enter && !title.is_empty() && title != meta.title {
-                    let mut s = self.session.lock().unwrap();
-                    let saved = if s.id == meta.id {
-                        s.title = title.clone();
-                        s.save()
-                    } else {
-                        Session::rename(&meta.id, &title)
+                    let saved = match self.live_session(&meta.id) {
+                        Some(live) => {
+                            let mut s = live.lock().unwrap();
+                            s.title = title.clone();
+                            s.save()
+                        }
+                        None => Session::rename(&meta.id, &title),
                     };
-                    drop(s);
                     match saved {
                         Ok(()) => {
                             if let Some(m) = list.iter_mut().find(|m| m.id == meta.id) {
@@ -1792,12 +1944,7 @@ impl App {
         let mut s =
             Session::new(&self.harness.cwd, &self.agent, self.model.as_ref().map(|m| m.key()), self.effort.clone());
         s.approval = self.approval;
-        self.session = Arc::new(Mutex::new(s));
-        self.items.clear();
-        self.selected = None;
-        self.open.clear();
-        self.context = None;
-        self.scroll.set(0);
+        self.show_view(View::new(s, self.model.clone()));
     }
 
     /// Handles a built-in command; false if it is a prompt command for the model.
@@ -1893,11 +2040,8 @@ impl App {
                     self.notice(format!("Agents: {}", names.join(", ")));
                 }
             }
-            ("/new", _) => {
-                self.interrupt();
-                self.new_session();
-            }
-            ("/session", _) if idle => {
+            ("/new", _) => self.new_session(),
+            ("/session", _) => {
                 let list = Session::list(Some(&self.harness.cwd));
                 if list.is_empty() {
                     self.notice("No saved sessions in this folder yet.");
@@ -2036,7 +2180,7 @@ impl App {
                 self.notice(lines.join("\n"));
             }
             ("/exit", _) => self.quit = true,
-            ("/session" | "/undo" | "/compact", _) => {
+            ("/undo" | "/compact", _) => {
                 self.notice("Wait for the current turn to finish (esc interrupts).")
             }
             _ => {

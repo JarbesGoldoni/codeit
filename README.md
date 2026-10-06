@@ -123,8 +123,8 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 | `/models` | pick the model for this session |
 | `/effort [level\|default]` | choose the reasoning effort in a popup, or set it directly |
 | `/agent [name]` | switch agent |
-| `/new` | start a new session |
-| `/session` | resume an earlier session from this folder; ctrl+r renames the selected one, ctrl+d (twice) deletes it |
+| `/new` | start a new session; a turn still running keeps going in the background |
+| `/session` | switch to another session of this folder, even while a turn runs: it keeps working in the background (the footer counts them, and the list marks them working or waiting for you); ctrl+r renames the selected one, ctrl+d (twice) deletes it |
 | `/undo` | undo the last turn and the file changes it made (shell commands' too, in git projects) |
 | `/compact` | summarize the conversation to free context |
 | `/approvals [auto\|ask]` | ask before edits and commands, or not |
@@ -136,7 +136,7 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 | `/login [provider]` | log in to a provider (the popup lists them, ● logged in) |
 | `/logout <provider>` | remove a login codeit saved |
 | `/status` | logins, MCP servers, language servers, skills, instruction files, session |
-| `/mcp [login\|logout\|reconnect name]` | a list of the MCP servers and their state: enter or space turns one on or off for this run; log in to one that uses OAuth |
+| `/mcp [login\|logout\|reconnect name]` | a list of the MCP servers and their state (green on, red off, yellow connecting, bright red broken): space turns one on or off for this run; log in to one that uses OAuth |
 | `/help` | list commands and keys |
 | `/exit` | exit codeit |
 

@@ -11,7 +11,8 @@ use ratatui::{
 };
 
 use super::app::{App, Catalog, Dialog, PickerKind, duration, tokens};
-use super::style::{AGENT, BLUE, SELECT, cut, meter, right, wrap};
+use super::style::{ADD, AGENT, BLUE, RED, SELECT, SOFT_RED, SOFT_YELLOW, cut, meter, right, wrap};
+use codeit_harness::mcp::Health;
 use codeit_harness::session::Approval;
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -188,6 +189,21 @@ fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
         status.insert(0, "  ".into());
         status.push("  ".into());
     }
+    // Sessions working while you look at another one.
+    let waiting = app.background.iter().filter(|v| v.dialog.is_some()).count();
+    let working = app.background.len() - waiting;
+    if working > 0 {
+        let spin = SPINNER[app.tick % SPINNER.len()];
+        status.push(format!("{spin} {working} working").fg(BLUE));
+        status.push(" · ".dim());
+    }
+    if waiting > 0 {
+        status.push(format!("{waiting} waiting for you").fg(SOFT_YELLOW));
+        status.push(" · ".dim());
+    }
+    if working + waiting > 0 {
+        status.push("/session  ".dim());
+    }
     status.push(model.dim());
     f.render_widget(right(left, status, area.width as usize), area);
 }
@@ -336,7 +352,7 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
     let hint = match &picker.kind {
         _ if help.is_some() => " enter save · esc close ",
         PickerKind::Session(..) => " ↑↓ move · enter open · ctrl+r rename · ctrl+d delete · esc close ",
-        PickerKind::Mcp => " ↑↓ move · enter or space turn on/off · esc close ",
+        PickerKind::Mcp => " ↑↓ move · space turn on/off · esc close ",
         _ => " ↑↓ move · enter choose · esc close ",
     };
     let block = Block::bordered()
@@ -354,6 +370,11 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
         return;
     }
     let rows = app.picker_rows();
+    // /mcp colours each server's state: on, off, connecting, broken.
+    let health: std::collections::HashMap<String, Health> = match picker.kind {
+        PickerKind::Mcp => app.harness.mcp.list().into_iter().map(|(name, _, h)| (name, h)).collect(),
+        _ => Default::default(),
+    };
     let mut status: Vec<Line> = Vec::new();
     if matches!(picker.kind, PickerKind::Model) {
         let loading = app.catalogs.values().filter(|c| matches!(c, Catalog::Loading)).count();
@@ -362,9 +383,8 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
         }
         for (id, c) in &app.catalogs {
             if let Catalog::Failed(e) = c {
-                status.push(Line::from(
-                    cut(&format!("{id}: {}", e.lines().next().unwrap_or_default()), w).fg(super::style::SOFT_RED),
-                ));
+                status
+                    .push(Line::from(cut(&format!("{id}: {}", e.lines().next().unwrap_or_default()), w).fg(SOFT_RED)));
             }
         }
         if rows.is_empty() && loading == 0 {
@@ -387,9 +407,16 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
             let mark = if *marked { "● ".fg(BLUE) } else { "  ".into() };
             let name = if picked { label.clone().white().bold() } else { label.clone().fg(Color::Gray) };
             let detail = cut(detail, w / 2);
+            let tone = match health.get(label) {
+                Some(Health::On) => ADD,
+                Some(Health::Off) => SOFT_RED,
+                Some(Health::Connecting) => SOFT_YELLOW,
+                Some(Health::Problem) => RED,
+                None => Color::DarkGray,
+            };
             let line = right(
                 vec![mark, Span::styled(cut(label, w.saturating_sub(detail.chars().count() + 4)), name.style)],
-                vec![detail.fg(Color::DarkGray)],
+                vec![detail.fg(tone)],
                 w,
             );
             if picked { Line::from(line.spans.into_iter().map(|s| s.bg(SELECT)).collect::<Vec<_>>()) } else { line }

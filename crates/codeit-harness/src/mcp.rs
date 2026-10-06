@@ -32,6 +32,15 @@ pub enum Status {
     Disabled,
 }
 
+/// How a server is doing, for the colour of its row in `/mcp`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Health {
+    On,
+    Off,
+    Connecting,
+    Problem,
+}
+
 /// A remote server answered 401 and no usable token is stored.
 #[derive(Debug)]
 pub struct NeedsLogin(pub Option<String>);
@@ -120,21 +129,21 @@ impl Mcp {
         }
     }
 
-    /// (name, state, on) per server, for the `/mcp` list.
-    pub fn list(&self) -> Vec<(String, String, bool)> {
+    /// (name, state, health) per server, for the `/mcp` list.
+    pub fn list(&self) -> Vec<(String, String, Health)> {
         self.servers
             .lock()
             .unwrap()
             .iter()
             .map(|(name, s)| {
-                let state = match s {
-                    Status::Connecting => "connecting…".to_string(),
-                    Status::Ready(c) => format!("{} tools", c.tools.len()),
-                    Status::Failed(e) => format!("failed: {}", e.lines().next().unwrap_or_default()),
-                    Status::NeedsLogin(_) => format!("needs a login: /mcp login {name}"),
-                    Status::Disabled => "off".to_string(),
+                let (state, health) = match s {
+                    Status::Connecting => ("connecting…".to_string(), Health::Connecting),
+                    Status::Ready(c) => (format!("on · {} tools", c.tools.len()), Health::On),
+                    Status::Failed(e) => (format!("failed: {}", e.lines().next().unwrap_or_default()), Health::Problem),
+                    Status::NeedsLogin(_) => (format!("needs a login: /mcp login {name}"), Health::Problem),
+                    Status::Disabled => ("off".to_string(), Health::Off),
                 };
-                (name.clone(), state, !matches!(s, Status::Disabled))
+                (name.clone(), state, health)
             })
             .collect()
     }
