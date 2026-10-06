@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Layout, Position, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap},
+    widgets::{Block, BorderType, Clear, Padding, Paragraph},
 };
 
 use super::app::{App, Catalog, Dialog, PickerKind, duration, tokens};
@@ -47,9 +47,13 @@ pub fn draw(app: &App, f: &mut Frame) {
     let commands = app.command_matches();
     let inner_width = left.width.saturating_sub(4).max(1) as usize;
     let (composer_rows, cursor) = composer_rows(&app.input, app.cursor, inner_width);
-    let dialog_lines = app.dialog.as_ref().map(|d| dialog_lines(d, inner_width));
+    // Most of the screen if it needs it, scrolled to keep the highlighted option in view.
+    let dialog_lines = app
+        .dialog
+        .as_ref()
+        .map(|d| dialog_window(dialog_lines(d, inner_width), (left.height * 3 / 4).max(6) as usize - 2));
     let bottom_height = match &dialog_lines {
-        Some(lines) => (lines.len() as u16 + 2).min(left.height / 2 + 4),
+        Some(lines) => lines.len() as u16 + 2,
         None => (composer_rows.len() as u16).clamp(1, 8) + 2,
     };
     let queued = app.queued.len().min(3) as u16;
@@ -123,7 +127,7 @@ pub fn draw(app: &App, f: &mut Frame) {
                 _ => " Permission ".to_string(),
             };
             f.render_widget(
-                Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+                Paragraph::new(lines).block(
                     Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().yellow()).title(title),
                 ),
                 bottom,
@@ -621,8 +625,10 @@ fn diff_lines(diff: &str, max: usize) -> (Vec<Line<'static>>, usize, usize) {
 
 // ── dialogs ─────────────────────────────────────────────────────────────────
 
-pub(super) fn dialog_lines(d: &Dialog, width: usize) -> Vec<Line<'static>> {
+/// The dialog's rows wrapped to `width`, and the row of the highlighted option.
+pub(super) fn dialog_lines(d: &Dialog, width: usize) -> (Vec<Line<'static>>, usize) {
     let mut lines = Vec::new();
+    let mut focus = 0;
     match d {
         Dialog::Permission { ask, selected, feedback } => {
             lines.push(Line::from(vec!["Allow codeit to ".bold(), ask.title.clone().bold(), "?".bold()]));
@@ -649,6 +655,9 @@ pub(super) fn dialog_lines(d: &Dialog, width: usize) -> Vec<Line<'static>> {
             let always = format!("Yes, always allow {scope} in this session");
             let options = ["Yes".to_string(), always, "No, and tell codeit what to do instead".to_string()];
             for (i, o) in options.iter().enumerate() {
+                if i == *selected {
+                    focus = lines.len();
+                }
                 let line = format!("{} {}. {o}", if i == *selected { "›" } else { " " }, i + 1);
                 lines.push(if i == *selected { Line::from(line.cyan().bold()) } else { Line::from(line) });
             }
@@ -671,19 +680,25 @@ pub(super) fn dialog_lines(d: &Dialog, width: usize) -> Vec<Line<'static>> {
             lines.push(Line::from(vec![head.cyan().bold(), q.question.clone().bold()]));
             lines.push(Line::from(""));
             for (i, (label, desc)) in q.options.iter().enumerate() {
+                if i == *selected {
+                    focus = lines.len();
+                }
                 let check = if q.multiple { if chosen.contains(&i) { "[x] " } else { "[ ] " } } else { "" };
                 let text = format!("{} {}. {check}{label}", if i == *selected { "›" } else { " " }, i + 1);
-                let mut spans = vec![if i == *selected { text.cyan().bold() } else { text.into() }];
+                lines.push(Line::from(if i == *selected { text.cyan().bold() } else { text.into() }));
                 if !desc.is_empty() {
-                    spans.push(format!("  {desc}").dim());
+                    lines.push(Line::from(format!("     {desc}").dim()));
                 }
-                lines.push(Line::from(spans));
             }
             let custom = q.options.len();
+            if *selected == custom {
+                focus = lines.len();
+            }
             let text = format!("{} {}. Type your own answer", if *selected == custom { "›" } else { " " }, custom + 1);
             lines.push(if *selected == custom { Line::from(text.cyan().bold()) } else { Line::from(text) });
             match typing {
                 Some(t) => {
+                    focus = lines.len();
                     lines.push(Line::from(vec!["  answer: ".bold(), t.clone().into(), "▏".dim()]));
                     lines.push(Line::from("enter sends · esc back".dim()));
                 }
@@ -698,7 +713,34 @@ pub(super) fn dialog_lines(d: &Dialog, width: usize) -> Vec<Line<'static>> {
             }
         }
     }
-    lines
+    // Wrapped here, so the box is sized by the rows it really takes.
+    let mut out = Vec::new();
+    let mut at = 0;
+    for (i, l) in lines.into_iter().enumerate() {
+        if i == focus {
+            at = out.len();
+        }
+        out.extend(super::style::wrap_spans(l, width));
+    }
+    (out, at)
+}
+
+/// At most `room` of the dialog's rows: the key hints at the bottom stay, and the rest
+/// scrolls to keep the focused row (and the one under it) in view.
+pub(super) fn dialog_window((mut lines, focus): (Vec<Line<'static>>, usize), room: usize) -> Vec<Line<'static>> {
+    let room = room.max(2);
+    if lines.len() <= room {
+        return lines;
+    }
+    let hint = lines.pop().unwrap();
+    let window = room - 1;
+    let start = (focus + 2).saturating_sub(window).min(lines.len() - window);
+    let mut out: Vec<Line> = lines.into_iter().skip(start).take(window).collect();
+    if start > 0 {
+        out[0] = Line::from("  ↑ more".dim());
+    }
+    out.push(hint);
+    out
 }
 
 #[cfg(test)]
@@ -714,6 +756,16 @@ mod tests {
         assert_eq!(pos, (1, 0));
         let (_, pos) = composer_rows("abcdef", 2, 4);
         assert_eq!(pos, (0, 2));
+    }
+
+    #[test]
+    fn long_dialogs_scroll_to_the_highlighted_option_and_keep_the_hints() {
+        let text = |l: &Line| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>();
+        let lines: Vec<Line<'static>> = (0..20).map(|i| Line::from(format!("row {i}"))).collect();
+        let shown: Vec<String> = dialog_window((lines.clone(), 15), 6).iter().map(text).collect();
+        assert_eq!(shown, ["  ↑ more", "row 13", "row 14", "row 15", "row 16", "row 19"]);
+        assert_eq!(dialog_window((lines.clone(), 0), 6).iter().map(text).next().unwrap(), "row 0");
+        assert_eq!(dialog_window((lines, 0), 30).len(), 20);
     }
 
     #[test]

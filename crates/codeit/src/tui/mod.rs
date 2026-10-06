@@ -40,8 +40,16 @@ pub async fn run(resume: Option<codeit_harness::session::Session>) -> Result<()>
     let mouse = harness.config.tui.mouse != Some(false);
     let app = App::new(tx.clone(), harness, resume);
     let mut terminal = ratatui::init();
+    style::set_terminal_bg();
+    // The terminal's background goes back to its own on a panic too.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        style::restore_terminal_bg();
+        hook(info);
+    }));
     // Before the input thread starts, so a key press reaches the splash.
     if let Err(e) = splash::run(&mut terminal) {
+        style::restore_terminal_bg();
         ratatui::restore();
         return Err(e);
     }
@@ -64,6 +72,7 @@ pub async fn run(resume: Option<codeit_harness::session::Session>) -> Result<()>
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
     }
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+    style::restore_terminal_bg();
     ratatui::restore();
     result
 }

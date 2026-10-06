@@ -57,6 +57,26 @@ pub fn bg() -> Color {
     *BG.get().unwrap_or(&BACKGROUND)
 }
 
+/// Sets the terminal's own background to ours, so the margin around the grid (which no
+/// cell covers) matches too; `restore_terminal_bg` undoes it.
+pub fn set_terminal_bg() {
+    if let Color::Rgb(r, g, b) = bg() {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = write!(out, "\x1b]11;#{r:02x}{g:02x}{b:02x}\x1b\\");
+        let _ = out.flush();
+    }
+}
+
+pub fn restore_terminal_bg() {
+    if matches!(bg(), Color::Rgb(..)) {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = write!(out, "\x1b]111\x1b\\");
+        let _ = out.flush();
+    }
+}
+
 /// Paints the whole area with the background, under what is drawn next.
 pub fn paint(f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
     f.buffer_mut().set_style(area, Style::new().bg(bg()));

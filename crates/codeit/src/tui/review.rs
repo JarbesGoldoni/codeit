@@ -471,7 +471,12 @@ pub fn draw(app: &App, f: &mut Frame) {
     let area = f.area();
     let summary: Vec<String> =
         r.summary.as_deref().map(|s| wrap(s, area.width.saturating_sub(10) as usize)).unwrap_or_default();
-    let dialog = app.dialog.as_ref().map(|d| super::ui::dialog_lines(d, area.width.saturating_sub(4) as usize));
+    let dialog = app.dialog.as_ref().map(|d| {
+        super::ui::dialog_window(
+            super::ui::dialog_lines(d, area.width.saturating_sub(4) as usize),
+            (area.height / 2).max(6) as usize,
+        )
+    });
     let [title, summary_area, body, bottom] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(summary.len().min(4) as u16),
