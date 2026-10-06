@@ -31,7 +31,10 @@ pub fn run(terminal: &mut DefaultTerminal) -> Result<()> {
         if t >= HELD {
             return Ok(());
         }
-        terminal.draw(|f| logo(f, t))?;
+        terminal.draw(|f| {
+            super::style::paint(f, f.area());
+            logo(f, t)
+        })?;
         if event::poll(Duration::from_millis(30))?
             && let Event::Key(k) = event::read()?
             && k.kind == KeyEventKind::Press

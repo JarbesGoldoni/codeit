@@ -209,6 +209,7 @@ pub fn draw(app: &App, f: &mut Frame) {
     let h = area.height.saturating_sub(4).min(40);
     let popup = Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h };
     f.render_widget(Clear, popup);
+    super::style::paint(f, popup);
     let title = v.panel.as_ref().map(|p| format!(" {} ", p.title)).unwrap_or_else(|| format!(" /{} ", v.command));
     let block = Block::bordered().border_type(BorderType::Rounded).title(title).padding(Padding::horizontal(1));
     let inner = block.inner(popup);

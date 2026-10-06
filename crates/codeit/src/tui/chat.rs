@@ -371,6 +371,13 @@ pub fn rows(app: &App, w: usize) -> Vec<Row> {
                 labelled = false;
             }
             Item::Assistant { text, reasoning, done } => {
+                // A reply still being played out shows only what is due.
+                let (reasoning, text) = match app.shown(i) {
+                    Some((r, t)) => {
+                        (&reasoning[..super::app::forward(reasoning, r)], &text[..super::app::forward(text, t)])
+                    }
+                    None => (reasoning.as_str(), text.as_str()),
+                };
                 if !reasoning.trim().is_empty() {
                     blank(&mut out);
                     gray_text(reasoning.trim(), w, true, &mut out);

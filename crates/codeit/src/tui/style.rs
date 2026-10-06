@@ -11,7 +11,7 @@ pub const BLUE: Color = Color::Rgb(0, 135, 175);
 /// The agent's answers and the side bubble.
 pub const AGENT: Color = Color::DarkGray;
 /// The frame around actions: barely there.
-pub const FAINT: Color = Color::Rgb(44, 44, 44);
+pub const FAINT: Color = Color::Rgb(62, 62, 62);
 /// Failures, without shouting.
 pub const SOFT_RED: Color = Color::Rgb(170, 95, 95);
 pub const ADD: Color = Color::Rgb(110, 170, 110);
@@ -22,6 +22,45 @@ pub const RED: Color = Color::Rgb(215, 75, 75);
 pub const SELECT: Color = Color::Rgb(44, 48, 66);
 pub const ADD_BG: Color = Color::Rgb(18, 48, 24);
 pub const DEL_BG: Color = Color::Rgb(60, 20, 20);
+
+/// The screen's background unless the config says otherwise: a soft dark gray, like the
+/// macOS Terminal's.
+const BACKGROUND: Color = Color::Rgb(30, 30, 30);
+static BG: std::sync::OnceLock<Color> = std::sync::OnceLock::new();
+
+/// Sets the background from the config's `tui.background`: `#rrggbb`, or `none` for the
+/// terminal's own. Returns a problem to report when the value isn't understood.
+pub fn set_background(value: Option<&str>) -> Option<String> {
+    let (color, problem) = match value.map(str::trim) {
+        None => (BACKGROUND, None),
+        Some("none") => (Color::Reset, None),
+        Some(v) => match parse_hex(v) {
+            Some(c) => (c, None),
+            None => (BACKGROUND, Some(format!("tui.background: `{v}` isn't #rrggbb or none"))),
+        },
+    };
+    let _ = BG.set(color);
+    problem
+}
+
+fn parse_hex(v: &str) -> Option<Color> {
+    let h = v.strip_prefix('#')?;
+    if h.len() != 6 {
+        return None;
+    }
+    let n = u32::from_str_radix(h, 16).ok()?;
+    Some(Color::Rgb((n >> 16) as u8, (n >> 8) as u8, n as u8))
+}
+
+/// The screen's background.
+pub fn bg() -> Color {
+    *BG.get().unwrap_or(&BACKGROUND)
+}
+
+/// Paints the whole area with the background, under what is drawn next.
+pub fn paint(f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+    f.buffer_mut().set_style(area, Style::new().bg(bg()));
+}
 
 pub fn width(spans: &[Span]) -> usize {
     spans.iter().map(|s| s.content.width()).sum()
@@ -168,7 +207,7 @@ pub fn frame<T: Clone>(
             let mut spans = vec![Span::styled("│ ", border)];
             let n = inner.saturating_sub(width(&l.spans));
             spans.extend(l.spans);
-            spans.push(Span::styled(" ".repeat(n), Style::new().bg(bg.unwrap_or(Color::Reset))));
+            spans.push(Span::styled(" ".repeat(n), Style::new().bg(bg.unwrap_or(self::bg()))));
             spans.push(Span::styled(" │", border));
             out.push((Line::from(spans), tag.clone()));
         }
@@ -192,7 +231,7 @@ pub fn meter(pct: u64, w: usize) -> Vec<Span<'static>> {
     let color = if pct >= 90 { SOFT_RED } else { BLUE };
     vec![
         "━".repeat(fill).fg(color),
-        "━".repeat(w.saturating_sub(fill)).fg(Color::Rgb(50, 50, 50)),
+        "━".repeat(w.saturating_sub(fill)).fg(Color::Rgb(66, 66, 66)),
         format!(" {pct:>2}%").fg(Color::Gray),
     ]
 }
@@ -214,5 +253,7 @@ mod tests {
         assert_eq!(t, ["╭──────╮", "│ hi   │", "╰── x ─╯"]);
         assert_eq!(boxed.iter().map(|r| r.1).collect::<Vec<_>>(), [0, 1, 0]);
         assert_eq!(cut("abcdef", 4), "abc…");
+        assert_eq!(parse_hex("#1e1e1e"), Some(Color::Rgb(30, 30, 30)));
+        assert_eq!(parse_hex("1e1e1e"), None);
     }
 }

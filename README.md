@@ -6,7 +6,7 @@ codeit works like [opencode](https://github.com/anomalyco/opencode): the same ca
 
 What it adds:
 
-- **A calm, readable UI.** Your messages and the answers in bubbles, thinking in gray, actions in a faint frame, a side bubble with the context used and your branch, and popups for models, sessions and effort.
+- **A calm, readable UI.** On a soft gray background: your messages and the answers in bubbles, thinking in gray (both shown smoothly as they stream), actions in a faint frame, a side bubble with the context used and your branch, and popups for models, sessions and effort.
 - **Light.** One native binary of about 18 MB, with no Node or Bun runtime behind it.
 
 codeit reads, searches and edits code, runs commands, plans, delegates to subagents, asks before risky actions, and keeps sessions you can resume and undo. It reviews diffs like a pull request (`/review`) and uses a cheaper model to condense long tool output (`/models`).
@@ -111,7 +111,8 @@ Actions show at one of three levels, Ctrl+O cycles them (remembered): **folded**
 | Enter on a selected action | show its whole output, or close it; on a folded group, unfold it |
 | Esc Esc (empty input) | edit your last message; sending it rewinds the conversation (and the files) to before it |
 | Ctrl+O | actions folded, as a list, or open (remembered) |
-| PgUp / PgDn, mouse wheel | scroll the history (the wheel also moves through the review screen, panels and popups; select text with Shift+drag, or turn the mouse off with `"tui": {"mouse": false}`) |
+| PgUp / PgDn, mouse wheel | scroll the history (the wheel also moves through the review screen, panels and popups) |
+| drag | select text; it is copied when you let go (frames left out). `"tui": {"mouse": false}` leaves the mouse to the terminal |
 | Ctrl+C | stop the answer, then clear the input, then quit |
 
 In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` no and say what to do instead, Esc no.
@@ -274,7 +275,8 @@ It can show a few words in the footer (a quota, say), refreshed at start, every 
   "shell": "/bin/bash",
   "default_agent": "build",              // the agent new sessions start with
   "approval": "auto",                    // or "ask", for new sessions
-  "tui": { "mouse": true }               // false: no mouse capture (plain terminal selection)
+  "tui": { "mouse": true,                // false: no mouse capture (plain terminal selection)
+           "background": "#1e1e1e" }     // the screen's gray; "none" keeps the terminal's
 }
 ```
 

@@ -60,8 +60,11 @@ pub struct CompactionConfig {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct TuiConfig {
-    /// Scroll with the mouse wheel (default true). Selecting text then needs Shift+drag.
+    /// Scroll with the mouse wheel and select text by dragging, copied when you let go
+    /// (default true). False leaves the mouse to the terminal.
     pub mouse: Option<bool>,
+    /// The screen's background: `#rrggbb` (default `#1e1e1e`) or `none` for the terminal's.
+    pub background: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

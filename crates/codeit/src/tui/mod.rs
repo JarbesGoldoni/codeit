@@ -74,8 +74,21 @@ async fn event_loop(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
 ) -> Result<()> {
     while !app.quit {
-        terminal.draw(|f| ui::draw(&app, f))?;
-        let Some(ev) = rx.recv().await else { break };
+        app.reveal();
+        terminal.draw(|f| {
+            ui::draw(&app, f);
+            app.screen.replace(f.buffer_mut().clone());
+        })?;
+        // While a reply is being played out, draw about 30 times a second.
+        let ev = if app.revealing() {
+            match tokio::time::timeout(Duration::from_millis(33), rx.recv()).await {
+                Ok(ev) => ev,
+                Err(_) => continue,
+            }
+        } else {
+            rx.recv().await
+        };
+        let Some(ev) = ev else { break };
         app.handle(ev);
         // Apply everything already queued before drawing again (fast streams, pastes).
         while let Ok(ev) = rx.try_recv() {

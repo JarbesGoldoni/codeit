@@ -26,6 +26,7 @@ fn badge() -> Line<'static> {
 }
 
 pub fn draw(app: &App, f: &mut Frame) {
+    super::style::paint(f, f.area());
     if app.review.is_some() {
         return super::review::draw(app, f);
     }
@@ -38,6 +39,7 @@ pub fn draw(app: &App, f: &mut Frame) {
         (area, None)
     };
     app.side_shown.set(side.is_some());
+    app.panes.set((left, side));
     if let Some(side) = side {
         draw_side(app, f, side);
     }
@@ -130,6 +132,14 @@ pub fn draw(app: &App, f: &mut Frame) {
         None => draw_composer(app, f, bottom, &composer_rows, cursor),
     }
     draw_footer(app, f, footer);
+    // What the mouse is selecting.
+    for (y, from, to) in app.selection_rows() {
+        for x in from..=to {
+            if let Some(c) = f.buffer_mut().cell_mut((x, y)) {
+                c.set_bg(Color::Rgb(58, 74, 110));
+            }
+        }
+    }
 
     if app.picker.is_some() {
         draw_picker(app, f, area);
@@ -204,6 +214,11 @@ fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
     }
     if working + waiting > 0 {
         status.push("/session  ".dim());
+    }
+    if let Some((text, until)) = &app.flash
+        && *until > std::time::Instant::now()
+    {
+        status.push(format!("{text}  ").fg(ADD));
     }
     status.push(model.dim());
     f.render_widget(right(left, status, area.width as usize), area);
@@ -345,7 +360,7 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
         for x in area.left()..area.right() {
             if let Some(c) = buf.cell_mut((x, y)) {
                 c.set_fg(Color::Rgb(70, 70, 70));
-                c.set_bg(Color::Reset);
+                c.set_bg(super::style::bg());
                 c.modifier = Modifier::empty();
             }
         }
@@ -357,6 +372,7 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
     };
     let popup = centered(area, 76, height);
     f.render_widget(Clear, popup);
+    super::style::paint(f, popup);
     let [input, list] = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(popup);
 
     let (title, secret, help): (String, bool, Option<String>) = match &picker.kind {

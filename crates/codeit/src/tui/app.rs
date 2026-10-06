@@ -68,6 +68,57 @@ pub struct ToolItem {
     pub lines: Option<usize>,
 }
 
+/// The reply being streamed, shown smoothly: some providers send it in bursts a second or
+/// more apart, so what arrived is played out over about a second instead of all at once.
+/// `item` is its index in `items`; the offsets are bytes of its reasoning and text shown.
+pub struct Typing {
+    pub item: usize,
+    pub reasoning: usize,
+    pub text: usize,
+    /// Bytes a second, set when more arrives.
+    rate: f64,
+    last: Instant,
+}
+
+/// Seconds to play out what has arrived, and the slowest pace (bytes a second).
+const CATCH_UP: f64 = 0.7;
+const MIN_PACE: f64 = 400.0;
+
+/// A line of the screen without the box drawn around it (`│ text │`) or its trailing spaces.
+fn unframe(line: &str) -> String {
+    let frame = |c: char| ('\u{2500}'..='\u{257F}').contains(&c);
+    let t = line.trim_end();
+    let t = t.trim_start_matches(|c: char| c == ' ' || frame(c));
+    let t = t.trim_end_matches(|c: char| c == ' ' || frame(c));
+    // Keep the indentation inside the frame, less the one space of padding.
+    let lead = line.trim_start().strip_prefix(|c: char| frame(c)).map(|r| r.len() - r.trim_start().len());
+    match lead {
+        Some(n) if n > 1 => format!("{}{t}", " ".repeat(n - 1)),
+        _ => t.to_string(),
+    }
+}
+
+/// Where a reply played out from `at` (bytes of reasoning, then of text) is after `step` more
+/// bytes, each end kept on a character boundary.
+fn pace(reasoning: &str, text: &str, at: (usize, usize), mut step: usize) -> (usize, usize) {
+    let mut advance = |from: usize, s: &str| {
+        let to = forward(s, (from + step).min(s.len())).max(from);
+        step = step.saturating_sub(to - from);
+        to
+    };
+    let r = advance(at.0, reasoning);
+    let t = if r >= reasoning.len() { advance(at.1, text) } else { at.1 };
+    (r, t)
+}
+
+/// `at`, moved forward to the next character boundary of `s`.
+pub fn forward(s: &str, mut at: usize) -> usize {
+    while at < s.len() && !s.is_char_boundary(at) {
+        at += 1;
+    }
+    at.min(s.len())
+}
+
 impl ToolItem {
     pub(super) fn new(id: String, name: String, title: String, state: ToolState) -> Self {
         let started = (state == ToolState::Running).then(Instant::now);
@@ -288,6 +339,7 @@ pub struct View {
     selected: Option<String>,
     open: HashSet<String>,
     scroll: u16,
+    typing: Option<Typing>,
     /// Deleted while its turn ran: deleted again once the turn has saved it for the last time.
     deleted: bool,
 }
@@ -310,6 +362,7 @@ impl View {
             selected: None,
             open: HashSet::new(),
             scroll: 0,
+            typing: None,
             deleted: false,
         }
     }
@@ -389,6 +442,16 @@ pub struct App {
     pub ext_status: Vec<(String, codeit_harness::extension::Tone)>,
     ext_status_at: Option<Instant>,
     pub tick: usize,
+    /// How much of the reply being streamed is on screen. See [`Typing`].
+    pub typing: Option<Typing>,
+    /// A few words for the footer, until the time given (`Copied 3 lines`).
+    pub flash: Option<(String, Instant)>,
+    /// Text being selected with the mouse: where the drag started and where it is now.
+    pub selection: Option<((u16, u16), (u16, u16))>,
+    /// The screen as last drawn, for copying a selection from it.
+    pub screen: std::cell::RefCell<ratatui::buffer::Buffer>,
+    /// Where the conversation and the side bubble were last drawn (a selection stays in one).
+    pub panes: Cell<(ratatui::layout::Rect, Option<ratatui::layout::Rect>)>,
     pub quit: bool,
 }
 
@@ -452,9 +515,17 @@ impl App {
             ext_status: Vec::new(),
             ext_status_at: None,
             tick: 0,
+            typing: None,
+            flash: None,
+            selection: None,
+            screen: Default::default(),
+            panes: Cell::new(Default::default()),
             quit: false,
         };
         for p in app.harness.problems.clone() {
+            app.error(format!("config: {p}"));
+        }
+        if let Some(p) = super::style::set_background(app.harness.config.tui.background.as_deref()) {
             app.error(format!("config: {p}"));
         }
         app.rebuild();
@@ -510,6 +581,46 @@ impl App {
         self.turn.is_some()
     }
 
+    /// Starts playing out the last item if it is a new reply (the one before shows whole),
+    /// at a pace that shows what has arrived in [`CATCH_UP`] seconds.
+    fn type_last(&mut self) {
+        let i = self.items.len().saturating_sub(1);
+        if self.typing.as_ref().is_none_or(|t| t.item != i) {
+            self.typing = Some(Typing { item: i, reasoning: 0, text: 0, rate: MIN_PACE, last: Instant::now() });
+        }
+        if let (Some(t), Some(Item::Assistant { text, reasoning, .. })) = (self.typing.as_mut(), self.items.get(i)) {
+            let backlog = reasoning.len().saturating_sub(t.reasoning) + text.len().saturating_sub(t.text);
+            t.rate = (backlog as f64 / CATCH_UP).max(MIN_PACE);
+        }
+    }
+
+    /// Shows more of the reply being streamed, by the time since the last call.
+    pub fn reveal(&mut self) {
+        let Some(t) = self.typing.as_mut() else { return };
+        let Some(Item::Assistant { text, reasoning, .. }) = self.items.get(t.item) else {
+            self.typing = None;
+            return;
+        };
+        let now = Instant::now();
+        // A pause between bursts doesn't count: the next one starts from a steady pace.
+        let dt = now.duration_since(t.last).as_secs_f64().min(0.05);
+        t.last = now;
+        (t.reasoning, t.text) = pace(reasoning, text, (t.reasoning, t.text), (t.rate * dt).ceil() as usize);
+    }
+
+    /// True while part of a reply that arrived isn't shown yet.
+    pub fn revealing(&self) -> bool {
+        self.typing.as_ref().is_some_and(|t| match self.items.get(t.item) {
+            Some(Item::Assistant { text, reasoning, .. }) => t.reasoning < reasoning.len() || t.text < text.len(),
+            _ => false,
+        })
+    }
+
+    /// Bytes of item `i`'s reasoning and text on screen, when it is being played out.
+    pub fn shown(&self, i: usize) -> Option<(usize, usize)> {
+        self.typing.as_ref().filter(|t| t.item == i).map(|t| (t.reasoning, t.text))
+    }
+
     pub(super) fn notice(&mut self, text: impl Into<String>) {
         self.items.push(Item::Notice(text.into()));
         self.scroll.set(0);
@@ -539,7 +650,7 @@ impl App {
         match ev {
             AppEvent::Term(Event::Key(k)) if k.kind != KeyEventKind::Release => self.key(k),
             AppEvent::Term(Event::Paste(text)) => self.paste(text),
-            AppEvent::Term(Event::Mouse(m)) => self.wheel(m.kind),
+            AppEvent::Term(Event::Mouse(m)) => self.mouse(m),
             AppEvent::Term(_) => {}
             AppEvent::Tick => {
                 self.tick = self.tick.wrapping_add(1);
@@ -597,6 +708,75 @@ impl App {
     }
 
     /// The mouse wheel: scrolls whatever is in front.
+    /// Dragging selects text, which is copied when the button is let go; the wheel scrolls.
+    fn mouse(&mut self, m: ratatui::crossterm::event::MouseEvent) {
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+        let at = (m.column, m.row);
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let popup = self.picker.is_some() || self.panel.is_some() || self.review.is_some();
+                self.selection = (!popup).then_some((at, at));
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(sel) = &mut self.selection {
+                    sel.1 = at;
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(sel) = self.selection.as_mut() {
+                    sel.1 = at;
+                }
+                let text = self.selected_text();
+                self.selection = None;
+                if !text.is_empty() {
+                    super::clipboard::copy_text(&text);
+                    let lines = text.lines().count();
+                    let what = if lines == 1 { "Copied".to_string() } else { format!("Copied {lines} lines") };
+                    self.flash = Some((what, Instant::now() + Duration::from_secs(2)));
+                }
+            }
+            kind => self.wheel(kind),
+        }
+    }
+
+    /// The selection as rows of the screen: (row, first column, last column), kept inside
+    /// the pane where it started.
+    pub fn selection_rows(&self) -> Vec<(u16, u16, u16)> {
+        let Some((a, b)) = self.selection else { return Vec::new() };
+        if a == b {
+            return Vec::new();
+        }
+        let (start, end) = if (a.1, a.0) <= (b.1, b.0) { (a, b) } else { (b, a) };
+        let (left, side) = self.panes.get();
+        let contains = |r: ratatui::layout::Rect| r.contains(ratatui::layout::Position::new(start.0, start.1));
+        let pane = side.filter(|s| contains(*s)).unwrap_or(left);
+        let (x0, x1) = (pane.left(), pane.right().saturating_sub(1));
+        let (y0, y1) = (start.1.max(pane.top()), end.1.min(pane.bottom().saturating_sub(1)));
+        (y0..=y1)
+            .map(|y| {
+                let from = if y == start.1 { start.0.clamp(x0, x1) } else { x0 };
+                let to = if y == end.1 { end.0.clamp(x0, x1) } else { x1 };
+                (y, from, to)
+            })
+            .filter(|(_, from, to)| from <= to)
+            .collect()
+    }
+
+    /// The selected text, without the frames drawn around it.
+    fn selected_text(&self) -> String {
+        let screen = self.screen.borrow();
+        let lines: Vec<String> = self
+            .selection_rows()
+            .into_iter()
+            .map(|(y, from, to)| {
+                let raw: String =
+                    (from..=to).filter_map(|x| screen.cell((x, y))).map(|c| c.symbol()).collect::<String>();
+                unframe(&raw)
+            })
+            .collect();
+        lines.join("\n").trim_matches('\n').to_string()
+    }
+
     fn wheel(&mut self, kind: ratatui::crossterm::event::MouseEventKind) {
         use ratatui::crossterm::event::MouseEventKind::{ScrollDown, ScrollUp};
         let up = match kind {
@@ -1540,15 +1720,22 @@ impl App {
 
     fn harness_event(&mut self, ev: HEvent) {
         match ev {
-            HEvent::Text(t) => match self.items.last_mut() {
-                Some(Item::Assistant { text, done: false, .. }) => text.push_str(&t),
-                _ => self.items.push(Item::Assistant { text: t, reasoning: String::new(), done: false }),
-            },
-            HEvent::Reasoning(t) => match self.items.last_mut() {
-                Some(Item::Assistant { reasoning, done: false, .. }) => reasoning.push_str(&t),
-                _ => self.items.push(Item::Assistant { text: String::new(), reasoning: t, done: false }),
-            },
+            HEvent::Text(t) => {
+                match self.items.last_mut() {
+                    Some(Item::Assistant { text, done: false, .. }) => text.push_str(&t),
+                    _ => self.items.push(Item::Assistant { text: t, reasoning: String::new(), done: false }),
+                }
+                self.type_last();
+            }
+            HEvent::Reasoning(t) => {
+                match self.items.last_mut() {
+                    Some(Item::Assistant { reasoning, done: false, .. }) => reasoning.push_str(&t),
+                    _ => self.items.push(Item::Assistant { text: String::new(), reasoning: t, done: false }),
+                }
+                self.type_last();
+            }
             HEvent::Reset => {
+                self.typing = None;
                 while matches!(
                     self.items.last(),
                     Some(Item::Assistant { done: false, .. })
@@ -1698,6 +1885,7 @@ impl App {
 
     /// Rebuilds the history from the session (after resume or undo).
     fn rebuild(&mut self) {
+        self.typing = None;
         let s = self.session.lock().unwrap();
         let mut items = Vec::new();
         if s.summary.is_some() {
@@ -1809,6 +1997,7 @@ impl App {
     /// Swaps the session on screen with `v`.
     fn swap_view(&mut self, v: &mut View) {
         use std::mem::swap;
+        swap(&mut self.typing, &mut v.typing);
         swap(&mut self.session, &mut v.session);
         swap(&mut self.items, &mut v.items);
         swap(&mut self.turn, &mut v.turn);
@@ -2247,5 +2436,29 @@ fn ago(t: u64) -> String {
         60..3600 => format!("{}m ago", d / 60),
         3600..86_400 => format!("{}h ago", d / 3600),
         _ => format!("{}d ago", d / 86_400),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plays_out_a_burst_reasoning_first_and_catches_up() {
+        let (r, t) = ("é".repeat(400), "x".repeat(400));
+        // A step shows a slice of the reasoning, ending on a character boundary.
+        let at = pace(&r, &t, (0, 0), 51);
+        assert_eq!(at, (52, 0));
+        // What is left of the reasoning, then the text.
+        assert_eq!(pace(&r, &t, (790, 0), 20), (800, 10));
+        assert_eq!(pace(&r, &t, (800, 395), 20), (800, 400));
+    }
+
+    #[test]
+    fn copied_lines_lose_their_frame() {
+        assert_eq!(unframe("│ hello there      │"), "hello there");
+        assert_eq!(unframe("│   indented │"), "  indented");
+        assert_eq!(unframe("╭──────╮"), "");
+        assert_eq!(unframe("  plain text   "), "plain text");
     }
 }
