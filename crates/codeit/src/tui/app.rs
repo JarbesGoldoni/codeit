@@ -57,6 +57,8 @@ pub struct ToolItem {
     pub diff: Option<String>,
     /// A subagent's latest steps.
     pub progress: Vec<String>,
+    /// The end of what a running command printed so far, raw.
+    pub live: String,
     pub started: Option<Instant>,
     /// How long it ran, once finished.
     pub elapsed: Option<Duration>,
@@ -77,6 +79,7 @@ impl ToolItem {
             output: String::new(),
             diff: None,
             progress: Vec::new(),
+            live: String::new(),
             started,
             elapsed: None,
             digest: None,
@@ -353,6 +356,8 @@ pub struct App {
     pub scroll: Cell<u16>,
     /// Columns of the conversation at the last draw (↑/↓ need its rows).
     pub width: Cell<usize>,
+    /// True while the side bubble is drawn (it then shows the todo list instead of the chat).
+    pub side_shown: Cell<bool>,
     /// The action (or folded group) picked with ↑/↓; `None` while typing. See `chat::Row`.
     pub selected: Option<String>,
     /// How much of the actions to show (ctrl+o): 0 folded, 1 list, 2 open.
@@ -426,6 +431,7 @@ impl App {
             command_pick: None,
             scroll: Cell::new(0),
             width: Cell::new(80),
+            side_shown: Cell::new(false),
             selected: None,
             level,
             open: HashSet::new(),
@@ -1574,6 +1580,19 @@ impl App {
                     }
                 }
             }
+            HEvent::ToolOutput { id, text } => {
+                if let Some(t) = self.tool_mut(&id) {
+                    t.live.push_str(&text);
+                    // Only the end is shown; keep a few screens of it.
+                    if t.live.len() > 16_000 {
+                        let mut cut = t.live.len() - 8_000;
+                        while !t.live.is_char_boundary(cut) {
+                            cut += 1;
+                        }
+                        t.live.drain(..cut);
+                    }
+                }
+            }
             HEvent::ToolDone { id, name, title, output, error, diff, lines, digest } => {
                 let state = if error { ToolState::Failed } else { ToolState::Done };
                 let t = match self.tool_mut(&id) {
@@ -1587,6 +1606,7 @@ impl App {
                     t.title = title;
                 }
                 t.state = state;
+                t.live.clear();
                 t.output = output;
                 t.diff = diff;
                 t.lines = lines;

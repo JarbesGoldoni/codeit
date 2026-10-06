@@ -154,6 +154,10 @@ pub async fn run(
     let deadline = tokio::time::sleep(Duration::from_millis(timeout_ms));
     tokio::pin!(deadline);
     let mut timed_out = false;
+    // What arrived is sent on to be shown live, at most every 100ms.
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut sent = 0;
     let status = loop {
         tokio::select! {
             Some(chunk) = rx.recv() => {
@@ -162,6 +166,7 @@ pub async fn run(
                     output.extend_from_slice(&chunk);
                 }
             }
+            _ = tick.tick() => sent = live(&output, sent, ctx),
             status = child.wait() => break status.ok(),
             _ = &mut deadline => {
                 timed_out = true;
@@ -185,6 +190,23 @@ pub async fn run(
     }
     let code = status.and_then(|s| s.code()).unwrap_or(-1);
     Ok((code, String::from_utf8_lossy(&output).into_owned(), timed_out))
+}
+
+/// Sends what `output` gained since byte `sent`, up to the last whole character; returns how
+/// far it got.
+fn live(output: &[u8], sent: usize, ctx: &Ctx) -> usize {
+    let new = &output[sent.min(output.len())..];
+    let end = match std::str::from_utf8(new) {
+        Ok(_) => new.len(),
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        Err(_) => new.len(),
+    };
+    if end > 0 {
+        // Raw: escapes and carriage returns can span pieces, so the interface cleans the whole.
+        let text = String::from_utf8_lossy(&new[..end]).into_owned();
+        let _ = ctx.events.send(crate::event::Event::ToolOutput { id: ctx.call_id.clone(), text });
+    }
+    sent + end
 }
 
 fn kill_group(pid: Option<u32>) {

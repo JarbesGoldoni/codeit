@@ -239,6 +239,8 @@ impl Run {
         let mut step = 0;
         let mut retries = 0;
         let mut compacted = false;
+        // Whether the model was already asked to close the todo items it left open.
+        let mut nudged = false;
         loop {
             if self.cancel.is_cancelled() {
                 break;
@@ -270,10 +272,11 @@ impl Run {
             // history otherwise), but a reminder says not to use them and calls are refused.
             let last_step = agent.steps.is_some_and(|m| step >= m);
             let tools: Vec<Arc<dyn Tool>> = h.tools(model_id, &rules, self.depth);
+            let todo = tools.iter().any(|t| t.name() == "todo");
             let req = {
                 let s = self.session.lock().unwrap();
                 let mut messages = s.context();
-                self.remind(&s, agent, &mut messages, last_step);
+                self.remind(&s, agent, &mut messages, last_step, todo);
                 if info.as_ref().is_some_and(|i| !i.vision) {
                     without_images(&mut messages, key);
                 }
@@ -322,7 +325,8 @@ impl Run {
             retries = 0;
 
             if out.parts.is_empty() {
-                if !out.cancelled {
+                // After the todo reminder, saying nothing means the list stands.
+                if !out.cancelled && !nudged {
                     self.emit(Event::Notice("The model returned an empty reply.".into()));
                 }
                 break;
@@ -344,6 +348,17 @@ impl Run {
                 if out.cancelled && !calls.is_empty() {
                     self.answer_interrupted(&calls);
                 }
+                // A turn that worked through a list and left items open is asked, once, to
+                // close them, so the list the user sees matches what was done.
+                if !out.cancelled && !nudged && todo && self.depth == 0 && self.worked() {
+                    let list = open_todos(&self.session.lock().unwrap().todos);
+                    if let Some(list) = list {
+                        nudged = true;
+                        let text = prompt::TODO_OPEN.replace("{list}", &list);
+                        self.session.lock().unwrap().push(Entry::new(Message::user(text)));
+                        continue;
+                    }
+                }
                 break;
             }
             if last_step {
@@ -359,17 +374,21 @@ impl Run {
                 self.emit(Event::Notice("The agent reached its step limit.".into()));
                 break;
             }
+            // The reply to the todo reminder needs no answer once the list is sent.
+            let closing = nudged && calls.iter().all(|c| c.name == "todo");
             let stop = self.run_tools(calls, index, agent, &rules, model_id).await;
             let _ = self.session.lock().unwrap().save();
-            if stop || self.cancel.is_cancelled() {
+            if stop || closing || self.cancel.is_cancelled() {
                 break;
             }
         }
         Ok(())
     }
 
-    /// The plan-mode reminder, the switch back to build, and the step-limit notice.
-    fn remind(&self, s: &Session, agent: &Agent, messages: &mut [Message], last_step: bool) {
+    /// The plan-mode reminder, the switch back to build, the step-limit notice, and a nudge
+    /// when the todo list (`todo`: the tool is offered) has open items and sat unchanged for
+    /// a few steps.
+    fn remind(&self, s: &Session, agent: &Agent, messages: &mut [Message], last_step: bool, todo: bool) {
         let mut add = |text: &str, last: bool| {
             let target = if last {
                 messages.last_mut()
@@ -395,6 +414,30 @@ impl Run {
         if last_step {
             add(prompt::MAX_STEPS, true);
         }
+        let mid_turn = messages.last().is_some_and(|m| m.parts.iter().any(|p| matches!(p, Part::ToolResult { .. })));
+        if todo
+            && mid_turn
+            && let Some(list) = open_todos(&s.todos)
+        {
+            let since = steps_since_todo(s);
+            if since >= TODO_STALE_STEPS
+                && since.is_multiple_of(TODO_STALE_STEPS)
+                && let Some(m) = messages.last_mut()
+            {
+                m.parts.push(Part::Text { text: prompt::TODO_STALE.replace("{list}", &list) });
+            }
+        }
+    }
+
+    /// True when this turn ran tools other than `todo`.
+    fn worked(&self) -> bool {
+        let s = self.session.lock().unwrap();
+        s.entries
+            .iter()
+            .rev()
+            .take_while(|e| !e.is_prompt())
+            .flat_map(|e| e.message.tool_calls())
+            .any(|c| c.name != "todo")
     }
 
     fn push_assistant(&self, parts: Vec<Part>, key: &str, agent: &Agent, usage: Option<Usage>) -> usize {
@@ -696,6 +739,32 @@ impl Run {
         let Some(pos) = all.iter().position(|c| c.id == call.id) else { return false };
         pos >= 2 && all[pos - 2..pos].iter().all(|c| c.name == call.name && c.input == call.input)
     }
+}
+
+/// Steps without a todo update after which the model is reminded of its open items.
+const TODO_STALE_STEPS: usize = 3;
+
+/// The open items as lines for a reminder, with every item's state; `None` if all are closed.
+fn open_todos(todos: &[crate::session::Todo]) -> Option<String> {
+    todos
+        .iter()
+        .any(|t| matches!(t.status.as_str(), "pending" | "in_progress"))
+        .then(|| todos.iter().map(|t| format!("- [{}] {}", t.status, t.content)).collect::<Vec<_>>().join("\n"))
+}
+
+/// Model replies in this turn since its last todo call.
+fn steps_since_todo(s: &Session) -> usize {
+    let mut n = 0;
+    for e in s.entries.iter().rev().take_while(|e| !e.is_prompt()) {
+        if e.message.role != Role::Assistant {
+            continue;
+        }
+        if e.message.tool_calls().any(|c| c.name == "todo") {
+            break;
+        }
+        n += 1;
+    }
+    n
 }
 
 /// Output sent to the interface: enough to show, not the whole thing.

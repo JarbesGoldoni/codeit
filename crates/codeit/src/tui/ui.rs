@@ -1,6 +1,6 @@
 //! Drawing: the conversation on the left with the status line, input box and footer under it;
-//! the side bubble on the right (title, context, branch, folder; the logo in its bottom edge);
-//! popups in the middle.
+//! the side bubble on the right (title, context, branch, folder, the todo list at the bottom;
+//! the logo in its bottom edge); popups in the middle.
 
 use ratatui::{
     Frame,
@@ -13,7 +13,7 @@ use ratatui::{
 use super::app::{App, Catalog, Dialog, PickerKind, duration, tokens};
 use super::style::{ADD, AGENT, BLUE, RED, SELECT, SOFT_RED, SOFT_YELLOW, cut, meter, right, wrap};
 use codeit_harness::mcp::Health;
-use codeit_harness::session::Approval;
+use codeit_harness::session::{Approval, Todo};
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 /// Columns of the side bubble; it shows when the terminal is at least `SIDE_MIN` wide.
@@ -37,6 +37,7 @@ pub fn draw(app: &App, f: &mut Frame) {
     } else {
         (area, None)
     };
+    app.side_shown.set(side.is_some());
     if let Some(side) = side {
         draw_side(app, f, side);
     }
@@ -222,9 +223,9 @@ fn draw_side(app: &App, f: &mut Frame, area: Rect) {
     let gray = |t: String| Line::from(t.fg(Color::Gray));
     let bar = w.saturating_sub(5);
 
-    let title = {
+    let (title, todos) = {
         let s = app.session.lock().unwrap();
-        if s.title.is_empty() { "New session".to_string() } else { s.title.clone() }
+        (if s.title.is_empty() { "New session".to_string() } else { s.title.clone() }, s.todos.clone())
     };
     let mut top: Vec<Line> = wrap(&title, w).into_iter().take(3).map(|l| Line::from(l.white().bold())).collect();
     match app.context {
@@ -247,7 +248,58 @@ fn draw_side(app: &App, f: &mut Frame, area: Rect) {
     let parts: Vec<&str> = app.cwd.trim_end_matches('/').rsplit('/').take(2).collect();
     top.push(gray(cut(&parts.into_iter().rev().collect::<Vec<_>>().join("/"), w)));
 
+    let room = (inner.height as usize).saturating_sub(top.len() + 1);
+    let list = todo_lines(&todos, w, room);
     f.render_widget(Paragraph::new(top), inner);
+    if !list.is_empty() {
+        let h = list.len() as u16;
+        let at = Rect { y: inner.bottom() - h, height: h, ..inner };
+        f.render_widget(Paragraph::new(list), at);
+    }
+}
+
+/// The todo list for the bottom of the side bubble, at most `room` lines: a heading with the
+/// count done, then each item behind its circle. Finished items go first when it doesn't fit.
+fn todo_lines(todos: &[Todo], w: usize, room: usize) -> Vec<Line<'static>> {
+    if todos.is_empty() || room < 2 {
+        return Vec::new();
+    }
+    let closed = |t: &Todo| matches!(t.status.as_str(), "completed" | "cancelled");
+    let done = todos.iter().filter(|t| closed(t)).count();
+    let item = |t: &Todo| -> Vec<Line<'static>> {
+        let (icon, style) = match t.status.as_str() {
+            "completed" => ("✔ ", Style::new().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)),
+            "cancelled" => ("✗ ", Style::new().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)),
+            "in_progress" => ("● ", Style::new().fg(Color::White).bold()),
+            _ => ("○ ", Style::new().fg(Color::Gray)),
+        };
+        let icon_style = if t.status == "in_progress" { Style::new().fg(BLUE) } else { style };
+        wrap(&t.content, w.saturating_sub(2))
+            .into_iter()
+            .take(2)
+            .enumerate()
+            .map(|(i, l)| {
+                let lead = if i == 0 { Span::styled(icon, icon_style) } else { Span::raw("  ") };
+                Line::from(vec![lead, Span::styled(l, style)])
+            })
+            .collect()
+    };
+    let mut rows: Vec<(bool, Vec<Line<'static>>)> = todos.iter().map(|t| (closed(t), item(t))).collect();
+    // Drop finished items, oldest first, then open ones from the end, until it fits.
+    let fits = |rows: &[(bool, Vec<Line>)]| rows.iter().map(|r| r.1.len()).sum::<usize>() < room;
+    let mut hidden = 0;
+    while !fits(&rows) {
+        let i = rows.iter().position(|r| r.0).unwrap_or(rows.len() - 1);
+        rows.remove(i);
+        hidden += 1;
+    }
+    let mut head = vec!["Todo".gray().bold(), format!("  {done}/{}", todos.len()).dark_gray()];
+    if hidden > 0 {
+        head.push(format!("  +{hidden} more").dark_gray());
+    }
+    let mut out = vec![Line::from(head)];
+    out.extend(rows.into_iter().flat_map(|r| r.1));
+    out
 }
 
 fn draw_history(app: &App, f: &mut Frame, area: Rect) {
@@ -655,5 +707,16 @@ mod tests {
         assert_eq!((added, removed), (1, 1));
         let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
         assert_eq!(text, ["    1  x", "    2 -old", "    2 +new", "    3  y"]);
+    }
+
+    #[test]
+    fn todo_list_drops_finished_items_first_when_short_of_room() {
+        let t = |c: &str, s: &str| Todo { content: c.into(), status: s.into() };
+        let todos = [t("a", "completed"), t("b", "in_progress"), t("c", "pending"), t("d", "cancelled")];
+        let text = |room| todo_lines(&todos, 20, room).iter().map(|l| l.to_string()).collect::<Vec<_>>();
+        assert_eq!(text(10), ["Todo  2/4", "✔ a", "● b", "○ c", "✗ d"]);
+        assert_eq!(text(4), ["Todo  2/4  +1 more", "● b", "○ c", "✗ d"]);
+        assert_eq!(text(3), ["Todo  2/4  +2 more", "● b", "○ c"]);
+        assert!(text(1).is_empty());
     }
 }

@@ -30,6 +30,11 @@ pub enum Event {
         id: String,
         text: String,
     },
+    /// What a running command printed since the last piece (bash), for showing it live.
+    ToolOutput {
+        id: String,
+        text: String,
+    },
     /// A tool call finished. `output` is what the user sees (shortened), `diff` a unified diff
     /// for file changes, `lines` the length of the full output, and `digest` what the model
     /// got instead of it when it was condensed.

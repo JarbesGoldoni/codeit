@@ -1,7 +1,7 @@
 //! The conversation as lines: your messages in blue bubbles, the agent's thinking as gray text,
 //! its finished actions in a faint frame, and its answer in a gray bubble with the agent, model,
 //! effort and time in the corner. An action still running isn't drawn here: the status line
-//! shows it until it finishes.
+//! shows it until it finishes, and a command's output so far shows in a box of its own.
 //!
 //! Actions show at one of three levels (ctrl+o): one summary line per group, a list, or each
 //! call with its output trimmed. ↑/↓ select an action (or a folded group); Enter opens it in
@@ -282,13 +282,28 @@ fn gray_text(text: &str, w: usize, italic: bool, out: &mut Vec<Row>) {
     }
 }
 
+/// The command and the last lines it printed, cut to `w` columns.
+fn live_rows(t: &ToolItem, w: usize) -> Vec<Row> {
+    let text = codeit_harness::util::clean_terminal(&t.live);
+    let lines: Vec<&str> = text.trim_end().lines().collect();
+    let mut out: Vec<Row> =
+        vec![(Line::from(cut(&format!("$ {}", t.title.lines().next().unwrap_or_default()), w).gray()), None)];
+    out.extend(
+        lines[lines.len().saturating_sub(LIVE_LINES)..].iter().map(|l| (Line::from(cut(l, w).dark_gray()), None)),
+    );
+    out
+}
+
+/// Lines of a running command's output shown while it runs.
+const LIVE_LINES: usize = 8;
+
 fn todo_rows(todos: &[codeit_harness::session::Todo], out: &mut Vec<Row>) {
     for t in todos {
         let (icon, style) = match t.status.as_str() {
             "completed" => ("✔ ", Style::new().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)),
-            "in_progress" => ("◼ ", Style::new().fg(Color::Gray).bold()),
+            "in_progress" => ("● ", Style::new().fg(Color::Gray).bold()),
             "cancelled" => ("✗ ", Style::new().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)),
-            _ => ("□ ", Style::new().fg(Color::Gray)),
+            _ => ("○ ", Style::new().fg(Color::Gray)),
         };
         out.push((
             Line::from(vec!["  ".into(), Span::styled(icon, style), Span::styled(t.content.clone(), style)]),
@@ -363,11 +378,12 @@ pub fn rows(app: &App, w: usize) -> Vec<Row> {
                 if text.trim().is_empty() {
                     continue;
                 }
-                // The answer is the text no action follows in its turn; text between actions
-                // is the agent talking while it works, shown like its thinking.
+                // The answer is the text no action follows in its turn (a todo update after it
+                // doesn't count); text between actions is the agent talking while it works,
+                // shown like its thinking.
                 let rest = items[i + 1..].iter().take_while(|x| !matches!(x, Item::User(_)));
-                let answer =
-                    rest.clone().all(|x| !matches!(x, Item::Tool(_))) && (*done || !app.busy() || i + 1 == items.len());
+                let answer = rest.clone().all(|x| !matches!(x, Item::Tool(t) if t.name != "todo"))
+                    && (*done || !app.busy() || i + 1 == items.len());
                 blank(&mut out);
                 if answer {
                     let label = rest
@@ -381,10 +397,16 @@ pub fn rows(app: &App, w: usize) -> Vec<Row> {
                     gray_text(text.trim(), w, false, &mut out);
                 }
             }
-            Item::Tool(t) if t.running() => {}
+            Item::Tool(t) if t.running() => {
+                if !t.live.trim().is_empty() {
+                    flush(&mut group, &mut out);
+                    blank(&mut out);
+                    out.extend(frame(live_rows(t, inner), w, FAINT, vec!["running".dim()], None));
+                }
+            }
             Item::Tool(t) if t.name == "todo" && !failed(t) => {}
             Item::Tool(t) => group.push(t),
-            Item::Todos(todos) if Some(i) == last_todos => {
+            Item::Todos(todos) if Some(i) == last_todos && !app.side_shown.get() => {
                 blank(&mut out);
                 todo_rows(todos, &mut out);
             }

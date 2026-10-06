@@ -110,6 +110,7 @@ async fn turn(h: &Arc<Harness>, s: &Arc<Mutex<Session>>, input: Input, reply: Re
             Event::ToolDone { name, error, output, .. } => {
                 format!("done:{name}:{}:{}", if error { "err" } else { "ok" }, output.lines().next().unwrap_or(""))
             }
+            Event::ToolOutput { text, .. } => format!("out:{text}"),
             Event::Error(e) => format!("error:{e}"),
             Event::Done => "end".into(),
             _ => continue,
@@ -241,6 +242,38 @@ async fn runs_subagents_and_bash() {
     assert!(!explore.tools.iter().any(|t| t.name == "task" || t.name == "edit"));
     assert_eq!(s.lock().unwrap().todos.len(), 1);
     assert_eq!(seen.last().unwrap().messages.last().unwrap().role, Role::User);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn todo_list_is_kept_current_and_bash_streams() {
+    let dir = temp_project();
+    let list = |a: &str, b: &str| json!({"todos": [{"content": "one", "status": a}, {"content": "two", "status": b}]});
+    let bash = |n: u32| vec![("bash", json!({"command": format!("echo hi; sleep 0.{n}")}))];
+    let provider = Scripted::new(vec![
+        vec![("todo", list("in_progress", "pending"))],
+        bash(3),
+        bash(1),
+        bash(2),
+        vec![("text", json!("All done."))],
+        vec![("todo", list("completed", "completed"))],
+        vec![("text", json!("never asked"))],
+    ]);
+    let (h, s) = setup(&dir, provider.clone()).await;
+    let kinds = turn(&h, &s, Input::Prompt("go".into()), Reply::Always).await;
+    assert!(kinds.iter().any(|k| k == "out:hi\n"), "bash output is sent while it runs: {kinds:?}");
+    let seen = provider.seen.lock().unwrap();
+    let last_text = |r: &ChatRequest| match r.messages.last().unwrap().parts.last().unwrap() {
+        Part::Text { text } => text.clone(),
+        _ => String::new(),
+    };
+    // Three steps without an update: the list is shown again with a reminder.
+    assert!(!last_text(&seen[3]).contains("hasn't changed"));
+    assert!(last_text(&seen[4]).contains("hasn't changed") && last_text(&seen[4]).contains("- [pending] two"));
+    // The turn ended with items open: asked once to close them, and done once they are.
+    assert!(last_text(&seen[5]).contains("ended with todo items still open"));
+    assert_eq!(seen.len(), 6, "no request after the closing todo call");
+    assert!(s.lock().unwrap().todos.iter().all(|t| t.status == "completed"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
