@@ -630,7 +630,7 @@ pub(super) fn dialog_lines(d: &Dialog, width: usize) -> Vec<Line<'static>> {
             } else {
                 format!("{} {}", ask.permission, short(&ask.always.join(", "), 50))
             };
-            let always = format!("Yes, and don't ask again this session for {scope}");
+            let always = format!("Yes, always allow {scope} in this session");
             let options = ["Yes".to_string(), always, "No, and tell codeit what to do instead".to_string()];
             for (i, o) in options.iter().enumerate() {
                 let line = format!("{} {}. {o}", if i == *selected { "›" } else { " " }, i + 1);
