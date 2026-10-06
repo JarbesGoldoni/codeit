@@ -133,7 +133,12 @@ pub enum Catalog {
 
 pub enum PickerKind {
     Model,
-    Session(Vec<SessionMeta>),
+    /// Saved sessions, and the one ctrl+d was pressed on once (pressed again, it is deleted).
+    Session(Vec<SessionMeta>, Option<String>),
+    /// MCP servers, turned on and off with enter or space.
+    Mcp,
+    /// A new title for a session; esc goes back to the list.
+    Rename(SessionMeta, Vec<SessionMeta>),
     /// The providers to log in to (loading while `None`).
     Login(Option<Vec<crate::login::Choice>>),
     /// How to log in to one provider.
@@ -195,7 +200,7 @@ const BUILTIN: &[(&str, &str, &str)] = &[
     ("/review", "[branch|commit|pr N]", "review a diff with codeit, comments on lines like a PR"),
     ("/paste", "", "attach the image in the clipboard (also ctrl+v / alt+v)"),
     ("/copy", "", "copy codeit's last answer to the clipboard"),
-    ("/mcp", "[login|logout|reconnect name]", "MCP servers; log in to one that needs OAuth"),
+    ("/mcp", "[login|logout|reconnect name]", "MCP servers: turn them on or off; log in to one that needs OAuth"),
     ("/rename", "<title>", "rename this session"),
     ("/export", "[path]", "save this session as Markdown"),
     ("/approvals", "[auto|ask]", "ask before edits and commands, or not"),
@@ -639,13 +644,21 @@ impl App {
                 );
                 rows
             }
-            PickerKind::Session(list) => {
+            PickerKind::Session(list, deleting) => {
                 let current = self.session.lock().unwrap().id.clone();
                 list.iter()
                     .filter(|s| keep(&s.title))
-                    .map(|s| (s.title.clone(), ago(s.updated), s.id == current))
+                    .map(|s| {
+                        let detail = if deleting.as_ref() == Some(&s.id) {
+                            "ctrl+d again to delete".into()
+                        } else {
+                            ago(s.updated)
+                        };
+                        (s.title.clone(), detail, s.id == current)
+                    })
                     .collect()
             }
+            PickerKind::Mcp => self.harness.mcp.list().into_iter().filter(|(name, ..)| keep(name)).collect(),
             PickerKind::Login(None) => Vec::new(),
             PickerKind::Login(Some(list)) => list
                 .iter()
@@ -655,7 +668,7 @@ impl App {
             PickerKind::LoginMethod(c) => {
                 c.methods.iter().map(|m| (m.label().to_string(), String::new(), false)).collect()
             }
-            PickerKind::Key(_) | PickerKind::Enterprise => Vec::new(),
+            PickerKind::Key(_) | PickerKind::Enterprise | PickerKind::Rename(..) => Vec::new(),
             PickerKind::Effort => self
                 .effort_options()
                 .into_iter()
@@ -958,6 +971,27 @@ impl App {
     fn picker_key(&mut self, k: KeyEvent) {
         let count = self.picker_rows().len();
         let Some(p) = &mut self.picker else { return };
+        if let PickerKind::Rename(..) = p.kind {
+            self.rename_key(k);
+            return;
+        }
+        if let PickerKind::Session(_, deleting) = &mut p.kind {
+            let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+            match k.code {
+                KeyCode::Char('d') if ctrl => return self.delete_selected_session(),
+                KeyCode::Char('r') if ctrl => return self.rename_selected_session(),
+                _ => *deleting = None,
+            }
+        }
+        if let PickerKind::Mcp = p.kind
+            && matches!(k.code, KeyCode::Enter | KeyCode::Char(' '))
+        {
+            let selected = p.selected;
+            if let Some((name, ..)) = self.picker_rows().get(selected) {
+                self.harness.mcp.toggle(name);
+            }
+            return;
+        }
         // Typing a key or a domain: no list to move through.
         if matches!(p.kind, PickerKind::Key(_) | PickerKind::Enterprise) {
             match k.code {
@@ -1023,13 +1057,8 @@ impl App {
                             None => self.picker = Some(picker_with(PickerKind::Model)),
                         }
                     }
-                    PickerKind::Session(list) => {
-                        let found = list
-                            .iter()
-                            .filter(|s| words.iter().all(|w| s.title.to_lowercase().contains(w.as_str())))
-                            .nth(selected)
-                            .cloned();
-                        if let Some(meta) = found {
+                    PickerKind::Session(list, _) => {
+                        if let Some(meta) = filtered_sessions(&list, &words).nth(selected).cloned() {
                             self.resume(&meta.id);
                         }
                     }
@@ -1051,7 +1080,7 @@ impl App {
                             self.login_method(c, m);
                         }
                     }
-                    PickerKind::Key(_) | PickerKind::Enterprise => {}
+                    PickerKind::Key(_) | PickerKind::Enterprise | PickerKind::Rename(..) | PickerKind::Mcp => {}
                     PickerKind::Effort => {
                         let found = self
                             .effort_options()
@@ -1683,6 +1712,82 @@ impl App {
         self.notice(format!("New session: {title}"));
     }
 
+    /// The session the /session picker has selected.
+    fn selected_session(&self) -> Option<(SessionMeta, Vec<SessionMeta>)> {
+        let p = self.picker.as_ref()?;
+        let PickerKind::Session(list, _) = &p.kind else { return None };
+        let words: Vec<String> = p.filter.to_lowercase().split_whitespace().map(String::from).collect();
+        let meta = filtered_sessions(list, &words).nth(p.selected)?.clone();
+        Some((meta, list.clone()))
+    }
+
+    /// ctrl+d in /session: asks once, deletes on the second press. Deleting the open session
+    /// starts a new one.
+    fn delete_selected_session(&mut self) {
+        let Some((meta, mut list)) = self.selected_session() else { return };
+        let Some(Picker { kind: PickerKind::Session(_, deleting), .. }) = &mut self.picker else { return };
+        if deleting.as_ref() != Some(&meta.id) {
+            *deleting = Some(meta.id);
+            return;
+        }
+        Session::delete(&meta.id);
+        if self.session.lock().unwrap().id == meta.id {
+            self.new_session();
+        }
+        list.retain(|s| s.id != meta.id);
+        let p = self.picker.as_mut().expect("picker is open");
+        p.selected = p.selected.min(filtered_sessions(&list, &[]).count().saturating_sub(1));
+        p.kind = PickerKind::Session(list.clone(), None);
+        if list.is_empty() {
+            self.picker = None;
+        }
+        self.notice(format!("Deleted the session: {}", meta.title));
+    }
+
+    /// ctrl+r in /session: asks for a new title.
+    fn rename_selected_session(&mut self) {
+        let Some((meta, list)) = self.selected_session() else { return };
+        let filter = meta.title.clone();
+        self.picker = Some(Picker { kind: PickerKind::Rename(meta, list), filter, selected: 0 });
+    }
+
+    fn rename_key(&mut self, k: KeyEvent) {
+        let Some(p) = &mut self.picker else { return };
+        match k.code {
+            KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => self.picker = None,
+            KeyCode::Backspace => {
+                p.filter.pop();
+            }
+            KeyCode::Char(c) => p.filter.push(c),
+            KeyCode::Esc | KeyCode::Enter => {
+                let picker = self.picker.take().expect("picker is open");
+                let PickerKind::Rename(meta, mut list) = picker.kind else { return };
+                let title = picker.filter.trim().to_string();
+                if k.code == KeyCode::Enter && !title.is_empty() && title != meta.title {
+                    let mut s = self.session.lock().unwrap();
+                    let saved = if s.id == meta.id {
+                        s.title = title.clone();
+                        s.save()
+                    } else {
+                        Session::rename(&meta.id, &title)
+                    };
+                    drop(s);
+                    match saved {
+                        Ok(()) => {
+                            if let Some(m) = list.iter_mut().find(|m| m.id == meta.id) {
+                                m.title = title;
+                            }
+                        }
+                        Err(e) => self.error(format!("Couldn't rename the session: {e:#}")),
+                    }
+                }
+                let selected = list.iter().position(|m| m.id == meta.id).unwrap_or(0);
+                self.picker = Some(Picker { kind: PickerKind::Session(list, None), filter: String::new(), selected });
+            }
+            _ => {}
+        }
+    }
+
     fn new_session(&mut self) {
         let mut s =
             Session::new(&self.harness.cwd, &self.agent, self.model.as_ref().map(|m| m.key()), self.effort.clone());
@@ -1732,12 +1837,11 @@ impl App {
                 }
             }
             ("/mcp", []) => {
-                let lines = self.harness.mcp.describe();
-                self.notice(if lines.is_empty() {
-                    "No MCP servers configured (the `mcp` config key).".to_string()
+                if self.harness.mcp.list().is_empty() {
+                    self.notice("No MCP servers configured (the `mcp` config key).");
                 } else {
-                    format!("MCP servers:\n{}\n/mcp login|logout|reconnect <name>", lines.join("\n"))
-                });
+                    self.picker = Some(picker_with(PickerKind::Mcp));
+                }
             }
             ("/mcp", ["login", name]) => {
                 let (h, tx, name) = (self.harness.clone(), self.tx.clone(), name.to_string());
@@ -1798,7 +1902,7 @@ impl App {
                 if list.is_empty() {
                     self.notice("No saved sessions in this folder yet.");
                 } else {
-                    self.picker = Some(Picker { kind: PickerKind::Session(list), filter: String::new(), selected: 0 });
+                    self.picker = Some(picker_with(PickerKind::Session(list, None)));
                 }
             }
             ("/undo", _) if idle => {
@@ -1949,6 +2053,11 @@ impl App {
         }
         true
     }
+}
+
+/// Saved sessions whose title has every word of the filter.
+fn filtered_sessions<'a>(list: &'a [SessionMeta], words: &'a [String]) -> impl Iterator<Item = &'a SessionMeta> {
+    list.iter().filter(|s| words.iter().all(|w| s.title.to_lowercase().contains(w.as_str())))
 }
 
 fn picker_with(kind: PickerKind) -> Picker {

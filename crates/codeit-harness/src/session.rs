@@ -181,6 +181,10 @@ impl Session {
 
     pub fn save(&mut self) -> Result<()> {
         self.updated = util::now();
+        self.write()
+    }
+
+    fn write(&self) -> Result<()> {
         let d = dir();
         std::fs::create_dir_all(&d)?;
         write_atomic(&d.join(format!("{}.json", self.id)), &serde_json::to_vec(self)?)?;
@@ -206,6 +210,13 @@ impl Session {
             .collect();
         out.sort_by_key(|m| std::cmp::Reverse(m.updated));
         out
+    }
+
+    /// Renames a saved session, keeping its place in the list.
+    pub fn rename(id: &str, title: &str) -> Result<()> {
+        let mut s = Self::load(id)?;
+        s.title = title.to_string();
+        s.write()
     }
 
     pub fn delete(id: &str) {
@@ -377,6 +388,21 @@ fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_keeps_the_place_in_the_list() {
+        crate::test_home();
+        let mut s = Session::new(Path::new("/rename-test"), "build", None, None);
+        s.title = "old".into();
+        s.save().unwrap();
+        let updated = s.updated;
+        Session::rename(&s.id, "new").unwrap();
+        let back = Session::load(&s.id).unwrap();
+        assert_eq!((back.title.as_str(), back.updated), ("new", updated));
+        assert_eq!(Session::list(Some(Path::new("/rename-test")))[0].title, "new");
+        Session::delete(&s.id);
+        assert!(Session::list(Some(Path::new("/rename-test"))).is_empty());
+    }
 
     #[test]
     fn undo_restores_files_and_entries() {

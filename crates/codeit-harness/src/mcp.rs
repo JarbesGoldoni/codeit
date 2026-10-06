@@ -89,7 +89,54 @@ impl Mcp {
                 None => Status::Failed(format!("{e:#}")),
             },
         };
+        // Turned off while it was connecting: drop the connection.
+        if matches!(self.status_of(name), Some(Status::Disabled)) {
+            return;
+        }
         self.set(name, status);
+    }
+
+    fn status_of(&self, name: &str) -> Option<Status> {
+        let servers = self.servers.lock().unwrap();
+        servers.iter().find(|(n, _)| n == name).map(|(_, s)| match s {
+            Status::Connecting => Status::Connecting,
+            Status::Ready(c) => Status::Ready(c.clone()),
+            Status::Failed(e) => Status::Failed(e.clone()),
+            Status::NeedsLogin(h) => Status::NeedsLogin(h.clone()),
+            Status::Disabled => Status::Disabled,
+        })
+    }
+
+    /// Turns a server off (closing its connection) or back on, for this run; true if it is on now.
+    pub fn toggle(self: &Arc<Self>, name: &str) -> bool {
+        if matches!(self.status_of(name), Some(Status::Disabled)) {
+            self.set(name, Status::Connecting);
+            let (me, name) = (self.clone(), name.to_string());
+            tokio::spawn(async move { me.connect(&name).await });
+            true
+        } else {
+            self.set(name, Status::Disabled);
+            false
+        }
+    }
+
+    /// (name, state, on) per server, for the `/mcp` list.
+    pub fn list(&self) -> Vec<(String, String, bool)> {
+        self.servers
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(name, s)| {
+                let state = match s {
+                    Status::Connecting => "connecting…".to_string(),
+                    Status::Ready(c) => format!("{} tools", c.tools.len()),
+                    Status::Failed(e) => format!("failed: {}", e.lines().next().unwrap_or_default()),
+                    Status::NeedsLogin(_) => format!("needs a login: /mcp login {name}"),
+                    Status::Disabled => "off".to_string(),
+                };
+                (name.clone(), state, !matches!(s, Status::Disabled))
+            })
+            .collect()
     }
 
     /// The URL of a remote server.

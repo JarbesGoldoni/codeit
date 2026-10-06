@@ -56,6 +56,11 @@ impl Provider for Scripted {
             let _ = events.send(ChatEvent::Text("Ran 3000 lines of build output; the build failed.".into()));
             return Ok(());
         }
+        // Session titles.
+        if req.system.as_deref().is_some_and(|s| s.contains("You name coding sessions")) {
+            let _ = events.send(ChatEvent::Text("Fake session".into()));
+            return Ok(());
+        }
         // Subagents (their system prompt is the explore prompt) answer right away.
         if req.system.as_deref().is_some_and(|s| s.contains("read-only search agent")) {
             self.seen.lock().unwrap().push(req);
@@ -439,4 +444,23 @@ async fn picks_up_commands_and_skills_written_after_startup() {
     assert!(h.skills().iter().any(|s| s.name == "notes"));
     assert!(h.skills().iter().any(|s| s.name == "customize-codeit"));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn the_model_names_the_session_once() {
+    let dir = temp_project();
+    let provider = Scripted::new(vec![vec![("text", json!("Hi."))], vec![("text", json!("Again."))]]);
+    let (h, s) = setup(&dir, provider.clone()).await;
+    turn(&h, &s, Input::Prompt("please look at the add function in lib".into()), Reply::Once).await;
+    for _ in 0..50 {
+        if !s.lock().unwrap().title.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(s.lock().unwrap().title, "Fake session");
+    s.lock().unwrap().title = "Mine".into();
+    turn(&h, &s, Input::Prompt("and now sub".into()), Reply::Once).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(s.lock().unwrap().title, "Mine");
 }

@@ -112,7 +112,7 @@ impl Run {
                 compaction::compact(self, &provider, &model_id, &key, false).await?;
                 return Ok(());
             }
-            Input::Prompt(text) => self.add_prompt(&text, &text).await,
+            Input::Prompt(text) => self.add_prompt(&text, &text, &key).await,
             Input::Command { name, args } => {
                 let cmd = self
                     .harness
@@ -150,7 +150,7 @@ impl Run {
                     e.agent = Some(agent.name.clone());
                     self.session.lock().unwrap().push(e);
                 } else {
-                    self.add_prompt(&typed, &text).await;
+                    self.add_prompt(&typed, &text, &key).await;
                 }
             }
         }
@@ -158,7 +158,7 @@ impl Run {
     }
 
     /// Adds the user's message, with the files it mentions attached.
-    async fn add_prompt(&self, typed: &str, text: &str) {
+    async fn add_prompt(&self, typed: &str, text: &str, key: &str) {
         let mut parts = vec![Part::Text { text: text.to_string() }];
         for path in mentions(text, &self.harness.cwd) {
             let shown = util::display(&self.harness.cwd, &path);
@@ -194,19 +194,42 @@ impl Run {
         }
         let mut entry = Entry::new(Message { role: Role::User, parts, model: None });
         entry.prompt = Some(typed.to_string());
-        let title = {
+        let first = {
             let mut s = self.session.lock().unwrap();
+            let first = s.title.is_empty() && !s.entries.iter().any(|e| e.is_prompt());
             s.push(entry);
-            if s.title.is_empty() {
-                s.title = util::title(typed);
-                Some(s.title.clone())
-            } else {
-                None
-            }
+            first
         };
-        if let Some(t) = title {
-            self.emit(Event::Title(t));
+        if first && self.depth == 0 {
+            self.name_session(typed, key);
         }
+    }
+
+    /// Asks the helper model for a title for the session in the background, from its first
+    /// request; the first line of the request if that fails. A title set meanwhile is kept.
+    fn name_session(&self, typed: &str, key: &str) {
+        let (h, session, events) = (self.harness.clone(), self.session.clone(), self.events.clone());
+        let (typed, key) = (typed.to_string(), key.to_string());
+        let request: String = typed.chars().take(2000).collect();
+        tokio::spawn(async move {
+            let id = session.lock().unwrap().id.clone();
+            let answer = match h.helper(&key, 2_000).await {
+                Some(helper) => {
+                    crate::condense::ask(&helper, &id, prompt::TITLE, request, &CancellationToken::new()).await
+                }
+                None => None,
+            };
+            let title =
+                answer.as_deref().map(clean_title).filter(|t| !t.is_empty()).unwrap_or_else(|| util::title(&typed));
+            let mut s = session.lock().unwrap();
+            if !s.title.is_empty() {
+                return;
+            }
+            s.title = title.clone();
+            let _ = s.save();
+            drop(s);
+            let _ = events.send(Event::Title(title));
+        });
     }
 
     async fn run_loop(&self, agent: &Agent, key: &str, provider: &Arc<dyn Provider>, model_id: &str) -> Result<()> {
@@ -750,9 +773,23 @@ fn overflowed(text: &str) -> bool {
     .any(|k| t.contains(k))
 }
 
+/// The title line of a model's answer, without quotes, a "Title:" label or a final period.
+fn clean_title(answer: &str) -> String {
+    let line = answer.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
+    let line = line.strip_prefix("Title:").unwrap_or(line).trim();
+    let line = line.trim_matches(|c: char| matches!(c, '"' | '\'' | '`' | '*' | '#') || c.is_whitespace());
+    util::title(line.trim_end_matches('.'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleans_the_title() {
+        assert_eq!(clean_title("\"Fix the add function.\"\n"), "Fix the add function");
+        assert_eq!(clean_title("Title: **Port MCP toggles**"), "Port MCP toggles");
+    }
 
     #[test]
     fn classifies_errors_and_mentions() {

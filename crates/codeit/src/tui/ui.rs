@@ -293,7 +293,11 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
 
     let (title, secret, help): (String, bool, Option<String>) = match &picker.kind {
         PickerKind::Model => (" /models ".into(), false, None),
-        PickerKind::Session(_) => (" /session ".into(), false, None),
+        PickerKind::Session(..) => (" /session ".into(), false, None),
+        PickerKind::Mcp => (" /mcp ".into(), false, None),
+        PickerKind::Rename(..) => {
+            (" /session · rename ".into(), false, Some("Type the new title and press enter; esc goes back.".into()))
+        }
         PickerKind::Login(_) => (" /login ".into(), false, None),
         PickerKind::LoginMethod(c) => (format!(" /login · {} ", c.name), false, None),
         PickerKind::Key(c) => (
@@ -329,7 +333,12 @@ fn draw_picker(app: &App, f: &mut Frame, area: Rect) {
         ),
         input,
     );
-    let hint = if help.is_some() { " enter save · esc close " } else { " ↑↓ move · enter choose · esc close " };
+    let hint = match &picker.kind {
+        _ if help.is_some() => " enter save · esc close ",
+        PickerKind::Session(..) => " ↑↓ move · enter open · ctrl+r rename · ctrl+d delete · esc close ",
+        PickerKind::Mcp => " ↑↓ move · enter or space turn on/off · esc close ",
+        _ => " ↑↓ move · enter choose · esc close ",
+    };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(AGENT))

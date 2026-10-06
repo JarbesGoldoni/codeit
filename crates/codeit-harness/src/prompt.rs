@@ -12,6 +12,7 @@ pub const MAX_STEPS: &str = include_str!("prompts/max_steps.md");
 pub const COMPACTION: &str = include_str!("prompts/compaction.md");
 pub const COMPACTION_REQUEST: &str = include_str!("prompts/compaction_request.md");
 pub const CONDENSE: &str = include_str!("prompts/condense.md");
+pub const TITLE: &str = include_str!("prompts/title.md");
 
 pub fn system(h: &Harness, agent: &Agent, model_key: &str, rules: &Ruleset) -> String {
     let mut parts: Vec<String> = vec![agent.prompt.clone().unwrap_or_else(|| BASE.to_string())];

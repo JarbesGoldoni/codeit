@@ -84,6 +84,47 @@ pub struct Helper {
     pub model: String,
 }
 
+/// Sends one request without tools to the helper model and returns its text; `None` when it
+/// fails, answers nothing or takes too long.
+pub async fn ask(
+    helper: &Helper,
+    session_id: &str,
+    system: &str,
+    request: String,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Option<String> {
+    let req = ChatRequest {
+        model: helper.model.clone(),
+        system: Some(system.to_string()),
+        messages: vec![Message::user(request)],
+        tools: Vec::new(),
+        effort: None,
+        session_id: session_id.to_string(),
+        agent_initiated: true,
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let p = helper.provider.clone();
+    let task_handle = tokio::spawn(async move { p.chat(req, tx).await });
+    let mut text = String::new();
+    let collect = async {
+        while let Some(ev) = rx.recv().await {
+            if let ChatEvent::Text(t) = ev {
+                text.push_str(&t);
+            }
+        }
+    };
+    tokio::select! {
+        _ = collect => {}
+        _ = tokio::time::sleep(TIMEOUT) => { task_handle.abort(); return None; }
+        _ = cancel.cancelled() => { task_handle.abort(); return None; }
+    }
+    if !matches!(task_handle.await, Ok(Ok(()))) {
+        return None;
+    }
+    let text = text.trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
 /// Asks the helper model for a digest of `content`; `None` when it fails or takes too long.
 /// Returns (what the model gets, the digest alone for the interface).
 #[allow(clippy::too_many_arguments)]
@@ -101,38 +142,7 @@ pub async fn condense(
         title.replace('"', "'"),
         task.chars().take(600).collect::<String>()
     );
-    let req = ChatRequest {
-        model: helper.model.clone(),
-        system: Some(prompt::CONDENSE.to_string()),
-        messages: vec![Message::user(request)],
-        tools: Vec::new(),
-        effort: None,
-        session_id: session_id.to_string(),
-        agent_initiated: true,
-    };
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let p = helper.provider.clone();
-    let task_handle = tokio::spawn(async move { p.chat(req, tx).await });
-    let mut digest = String::new();
-    let collect = async {
-        while let Some(ev) = rx.recv().await {
-            if let ChatEvent::Text(t) = ev {
-                digest.push_str(&t);
-            }
-        }
-    };
-    tokio::select! {
-        _ = collect => {}
-        _ = tokio::time::sleep(TIMEOUT) => { task_handle.abort(); return None; }
-        _ = cancel.cancelled() => { task_handle.abort(); return None; }
-    }
-    if !matches!(task_handle.await, Ok(Ok(()))) {
-        return None;
-    }
-    let digest = digest.trim().to_string();
-    if digest.is_empty() {
-        return None;
-    }
+    let digest = ask(helper, session_id, prompt::CONDENSE, request, cancel).await?;
 
     let lines = full_lines(content);
     let path = saved_path(content).or_else(|| crate::tools::save_output(content).map(|p| p.display().to_string()));

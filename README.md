@@ -124,7 +124,7 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 | `/effort [level\|default]` | choose the reasoning effort in a popup, or set it directly |
 | `/agent [name]` | switch agent |
 | `/new` | start a new session |
-| `/session` | resume an earlier session from this folder |
+| `/session` | resume an earlier session from this folder; ctrl+r renames the selected one, ctrl+d (twice) deletes it |
 | `/undo` | undo the last turn and the file changes it made (shell commands' too, in git projects) |
 | `/compact` | summarize the conversation to free context |
 | `/approvals [auto\|ask]` | ask before edits and commands, or not |
@@ -136,7 +136,7 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 | `/login [provider]` | log in to a provider (the popup lists them, ● logged in) |
 | `/logout <provider>` | remove a login codeit saved |
 | `/status` | logins, MCP servers, language servers, skills, instruction files, session |
-| `/mcp [login\|logout\|reconnect name]` | MCP servers and their state; log in to one that uses OAuth |
+| `/mcp [login\|logout\|reconnect name]` | a list of the MCP servers and their state: enter or space turns one on or off for this run; log in to one that uses OAuth |
 | `/help` | list commands and keys |
 | `/exit` | exit codeit |
 
@@ -208,7 +208,7 @@ After every edit, the language servers that handle the file report its errors ba
 - Old tool output is pruned at the end of a turn, and only when it frees at least 20k tokens. The last two turns and the newest 40k tokens of output are always kept, and so are loaded skills. Pruning in batches means the provider's prompt cache is invalidated rarely.
 - **Long tool output is condensed.** A command, web fetch or MCP result over about 2k tokens goes to the small model first. The agent gets what ran and how it ended, the key results, every error line copied verbatim by codeit (not by the model, so nothing depends on its wording), and the path of the full output to grep. Reads and searches are never condensed. In the TUI the step is marked `condensed` and, unfolded, shows the digest after `≈`. If the helper fails or takes over 45s, the output goes in cut to its start and end as before.
 - When the context nears the model's limit, the older part of the conversation is replaced by a structured summary (objective, decisions, done and pending work, relevant files), and the most recent turns are kept as they are.
-- Session titles come from your first message, not from a model call.
+- Session titles: the first message of a session is sent once to the small model (else the session's), in the background, to name it in a few words. If that fails, the title is the message's first line.
 - On Copilot, only the requests you type count as premium requests: tool follow-ups, subagents, summaries and condensing are sent as `x-initiator: agent`, as opencode and VS Code do.
 - Summaries and condensing use the **small** model (`small_model` in the config) when its context can hold the input, else the session's model.
 
