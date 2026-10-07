@@ -251,6 +251,7 @@ const BUILTIN: &[(&str, &str, &str)] = &[
     ("/session", "", "switch sessions; a running one keeps working"),
     ("/undo", "", "undo the last turn and its file changes"),
     ("/compact", "", "summarize the conversation to free context"),
+    ("/todos", "clear", "clear the todo list"),
     ("/review", "[branch|commit|pr N]", "review a diff with codeit, comments on lines like a PR"),
     ("/paste", "", "attach the image in the clipboard (also ctrl+v / alt+v)"),
     ("/copy", "", "copy codeit's last answer to the clipboard"),
@@ -2293,6 +2294,16 @@ impl App {
                     self.start(Input::Compact);
                 }
             }
+            ("/todos", ["clear"]) => {
+                {
+                    let mut s = self.session.lock().unwrap();
+                    s.clear_todos();
+                    let _ = s.save();
+                }
+                self.items.push(Item::Todos(Vec::new()));
+                self.notice("Cleared the todo list; codeit hears about it with your next message.");
+            }
+            ("/todos", _) => self.notice("/todos clear empties the todo list."),
             ("/approvals", []) => self.notice(match self.approval {
                 Approval::Auto => {
                     "Approvals: auto (tools run without asking, except outside the project). /approvals ask to change."

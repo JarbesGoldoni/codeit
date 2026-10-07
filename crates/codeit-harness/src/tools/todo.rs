@@ -26,7 +26,7 @@ impl Tool for Todo {
         spec(
             "todo",
             "Write the task list for the current work; the user sees it. Use it for work with 3 or more steps or when \
-the user gives several tasks. Send the whole list each time. Keep exactly one item in_progress while working, and mark \
+the user gives several tasks. Send the whole list each time; an empty list clears it. Keep exactly one item in_progress while working, and mark \
 an item completed right after finishing it (only when it is really done, verification included). Skip it for simple \
 or purely conversational requests.",
             json!({
@@ -68,17 +68,25 @@ or purely conversational requests.",
             }
         }
         let count = |s: &str| todos.iter().filter(|t| t.status == s).count();
-        let summary = format!(
-            "Todo list updated: {} pending, {} in progress, {} completed{}.",
-            count("pending"),
-            count("in_progress"),
-            count("completed"),
-            match count("cancelled") {
-                0 => String::new(),
-                n => format!(", {n} cancelled"),
-            }
-        );
-        ctx.session.lock().unwrap().todos = todos.clone();
+        let summary = if todos.is_empty() {
+            "Todo list cleared.".to_string()
+        } else {
+            format!(
+                "Todo list updated: {} pending, {} in progress, {} completed{}.",
+                count("pending"),
+                count("in_progress"),
+                count("completed"),
+                match count("cancelled") {
+                    0 => String::new(),
+                    n => format!(", {n} cancelled"),
+                }
+            )
+        };
+        {
+            let mut s = ctx.session.lock().unwrap();
+            s.todos = todos.clone();
+            s.todos_cleared = false;
+        }
         let _ = ctx.events.send(Event::Todos(todos));
         Ok(Output::text(summary))
     }

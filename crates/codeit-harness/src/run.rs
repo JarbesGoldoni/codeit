@@ -192,10 +192,13 @@ impl Run {
                 self.session.lock().unwrap().mark_known(&path, None);
             }
         }
-        let mut entry = Entry::new(Message { role: Role::User, parts, model: None });
-        entry.prompt = Some(typed.to_string());
         let first = {
             let mut s = self.session.lock().unwrap();
+            if std::mem::take(&mut s.todos_cleared) {
+                parts.push(Part::Text { text: prompt::TODO_CLEARED.to_string() });
+            }
+            let mut entry = Entry::new(Message { role: Role::User, parts, model: None });
+            entry.prompt = Some(typed.to_string());
             let first = s.title.is_empty() && !s.entries.iter().any(|e| e.is_prompt());
             s.push(entry);
             first

@@ -278,6 +278,34 @@ async fn todo_list_is_kept_current_and_bash_streams() {
 }
 
 #[tokio::test]
+async fn todo_list_cleared_by_the_user_or_the_model() {
+    let dir = temp_project();
+    let provider = Scripted::new(vec![
+        vec![("todo", json!({"todos": [{"content": "one", "status": "completed"}]}))],
+        vec![("text", json!("Done."))],
+        vec![("todo", json!({"todos": []}))],
+        vec![("text", json!("Cleared."))],
+    ]);
+    let (h, s) = setup(&dir, provider.clone()).await;
+    turn(&h, &s, Input::Prompt("go".into()), Reply::Once).await;
+    // The user clears it: their next message carries the note, kept in the history.
+    s.lock().unwrap().clear_todos();
+    let kinds = turn(&h, &s, Input::Prompt("clear it again".into()), Reply::Once).await;
+    let seen = provider.seen.lock().unwrap();
+    let note = |r: &ChatRequest| {
+        r.messages
+            .iter()
+            .any(|m| m.parts.iter().any(|p| matches!(p, Part::Text { text } if text.contains("cleared the todo list"))))
+    };
+    assert!(!note(&seen[1]) && note(&seen[2]) && note(&seen[3]));
+    // The model clears it by sending an empty list.
+    assert!(kinds.iter().any(|k| k == "done:todo:ok:Todo list cleared."), "{kinds:?}");
+    let s = s.lock().unwrap();
+    assert!(s.todos.is_empty() && !s.todos_cleared);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn plan_mode_is_read_only_and_reminded() {
     let dir = temp_project();
     let provider = Scripted::new(vec![

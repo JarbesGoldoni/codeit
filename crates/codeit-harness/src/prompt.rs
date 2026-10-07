@@ -11,6 +11,7 @@ pub const BUILD_SWITCH: &str = include_str!("prompts/build_switch.md");
 pub const MAX_STEPS: &str = include_str!("prompts/max_steps.md");
 pub const TODO_STALE: &str = include_str!("prompts/todo_stale.md");
 pub const TODO_OPEN: &str = include_str!("prompts/todo_open.md");
+pub const TODO_CLEARED: &str = include_str!("prompts/todo_cleared.md");
 pub const COMPACTION: &str = include_str!("prompts/compaction.md");
 pub const COMPACTION_REQUEST: &str = include_str!("prompts/compaction_request.md");
 pub const CONDENSE: &str = include_str!("prompts/condense.md");

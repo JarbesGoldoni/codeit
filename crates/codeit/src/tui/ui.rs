@@ -286,13 +286,14 @@ fn todo_lines(todos: &[Todo], w: usize, room: usize) -> Vec<Line<'static>> {
     let closed = |t: &Todo| matches!(t.status.as_str(), "completed" | "cancelled");
     let done = todos.iter().filter(|t| closed(t)).count();
     let item = |t: &Todo| -> Vec<Line<'static>> {
-        let (icon, style) = match t.status.as_str() {
-            "completed" => ("✔ ", Style::new().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)),
-            "cancelled" => ("✗ ", Style::new().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)),
-            "in_progress" => ("● ", Style::new().fg(Color::White).bold()),
-            _ => ("○ ", Style::new().fg(Color::Gray)),
+        let (icon, icon_style, style) = match t.status.as_str() {
+            "completed" => ("● ", Style::new().fg(ADD), Style::new().fg(ADD).add_modifier(Modifier::CROSSED_OUT)),
+            "cancelled" => {
+                ("● ", Style::new().fg(SOFT_RED), Style::new().fg(SOFT_RED).add_modifier(Modifier::CROSSED_OUT))
+            }
+            "in_progress" => ("◐ ", Style::new().fg(BLUE), Style::new().fg(Color::White).bold()),
+            _ => ("○ ", Style::new().fg(Color::Gray), Style::new().fg(Color::Gray)),
         };
-        let icon_style = if t.status == "in_progress" { Style::new().fg(BLUE) } else { style };
         wrap(&t.content, w.saturating_sub(2))
             .into_iter()
             .take(2)
@@ -782,9 +783,9 @@ mod tests {
         let t = |c: &str, s: &str| Todo { content: c.into(), status: s.into() };
         let todos = [t("a", "completed"), t("b", "in_progress"), t("c", "pending"), t("d", "cancelled")];
         let text = |room| todo_lines(&todos, 20, room).iter().map(|l| l.to_string()).collect::<Vec<_>>();
-        assert_eq!(text(10), ["Todo  2/4", "✔ a", "● b", "○ c", "✗ d"]);
-        assert_eq!(text(4), ["Todo  2/4  +1 more", "● b", "○ c", "✗ d"]);
-        assert_eq!(text(3), ["Todo  2/4  +2 more", "● b", "○ c"]);
+        assert_eq!(text(10), ["Todo  2/4", "● a", "◐ b", "○ c", "● d"]);
+        assert_eq!(text(4), ["Todo  2/4  +1 more", "◐ b", "○ c", "● d"]);
+        assert_eq!(text(3), ["Todo  2/4  +2 more", "◐ b", "○ c"]);
         assert!(text(1).is_empty());
     }
 }

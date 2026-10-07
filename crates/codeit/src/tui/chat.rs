@@ -299,14 +299,16 @@ const LIVE_LINES: usize = 8;
 
 fn todo_rows(todos: &[codeit_harness::session::Todo], out: &mut Vec<Row>) {
     for t in todos {
-        let (icon, style) = match t.status.as_str() {
-            "completed" => ("✔ ", Style::new().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)),
-            "in_progress" => ("● ", Style::new().fg(Color::Gray).bold()),
-            "cancelled" => ("✗ ", Style::new().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)),
-            _ => ("○ ", Style::new().fg(Color::Gray)),
+        let (icon, icon_style, style) = match t.status.as_str() {
+            "completed" => ("● ", Style::new().fg(ADD), Style::new().fg(ADD).add_modifier(Modifier::CROSSED_OUT)),
+            "cancelled" => {
+                ("● ", Style::new().fg(SOFT_RED), Style::new().fg(SOFT_RED).add_modifier(Modifier::CROSSED_OUT))
+            }
+            "in_progress" => ("◐ ", Style::new().fg(BLUE), Style::new().fg(Color::Gray).bold()),
+            _ => ("○ ", Style::new().fg(Color::Gray), Style::new().fg(Color::Gray)),
         };
         out.push((
-            Line::from(vec!["  ".into(), Span::styled(icon, style), Span::styled(t.content.clone(), style)]),
+            Line::from(vec!["  ".into(), Span::styled(icon, icon_style), Span::styled(t.content.clone(), style)]),
             None,
         ));
     }

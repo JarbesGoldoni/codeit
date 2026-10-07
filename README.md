@@ -95,7 +95,7 @@ The screen has your conversation on the left and a side bubble on the right (whe
 - **The agent's thinking** is gray text, lined up with the text in the bubbles.
 - **Its actions** (reads, searches, edits, commands, fetches) are in a faint frame, one row each: the tool, what it worked on, and the result on the right (`631 lines`, `+8 −3`, `14 passed`), with the time. A failure shows only through its result, in a soft red (`exit 101`). An action enters the frame when it finishes; while it runs, the status line under the conversation says what it is (`⠼ Editing calc.py (2s • esc to interrupt)`), and a command shows its last lines of output as they come.
 - **Its answer** is in a gray bubble with the agent, model, effort and time in the corner (`build · GLM-5.1 · high · 38s`).
-- **The side bubble** shows the session's title and how much context is used, the branch (with `+new ~changed` files) and the folder. The model's todo list sits at its bottom: ● in progress, ○ pending, ✔ done, ✗ cancelled. (In a narrow terminal it shows in the conversation instead.)
+- **The side bubble** shows the session's title and how much context is used, the branch (with `+new ~changed` files) and the folder. The model's todo list sits at its bottom: ○ pending, ◐ in progress, and a filled ● crossed out when it's done (green) or cancelled (red). **/todos clear** empties it (codeit is told with your next message, so its history stays consistent); you can also ask codeit to clear or replace it. (In a narrow terminal it shows in the conversation instead.)
 
 Actions show at one of three levels, Ctrl+O cycles them (remembered): **folded** (one line per group: `▸ 4 actions · read 2 · edited 1 · ran 1 · 1 failed`), **list** (one row per action, the default) and **open** (each action with its output trimmed: a failed command's error lines, an edit's first changes). ↑/↓ select an action (or a folded group) and Enter opens it in full, or closes it.
 
@@ -128,6 +128,7 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 | `/session` | switch to another session of this folder, even while a turn runs: it keeps working in the background (the footer counts them, and the list marks them working or waiting for you); ctrl+r renames the selected one, ctrl+d (twice) deletes it |
 | `/undo` | undo the last turn and the file changes it made (shell commands' too, in git projects) |
 | `/compact` | summarize the conversation to free context |
+| `/todos clear` | clear the todo list |
 | `/approvals [auto\|ask]` | ask before edits and commands, or not |
 | `/rename <title>` | rename this session |
 | `/copy` | copy codeit's last answer to the clipboard (pbcopy, clip.exe, wl-copy, xclip or xsel; otherwise the terminal's OSC 52, which works over SSH) |
@@ -167,7 +168,7 @@ Each turn, codeit sends the conversation, the system prompt and the tool definit
 | `apply_patch` | Codex's patch format, which GPT-5 class models are trained on; replaces edit and write for them |
 | `bash` | A shell command, with a timeout (2 min default, 10 max), in its own process group so Esc stops all of it |
 | `grep`, `glob` | Content search (regex) and file search; built in, they respect `.gitignore` |
-| `todo` | The model's plan, shown to you as it changes. The model is reminded when it goes a few steps without updating it, and asked once to close open items when its turn ends |
+| `todo` | The model's plan, shown to you as it changes; an empty list clears it. The model is reminded when it goes a few steps without updating it, and asked once to close open items when its turn ends |
 | `task` | Hands work to a subagent with its own context (`explore` for read-only searching, `general` for anything); several run in parallel; `task_id` continues one |
 | `skill` | Loads a skill's instructions |
 | `webfetch` | A URL as text |

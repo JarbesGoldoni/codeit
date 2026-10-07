@@ -102,6 +102,9 @@ pub struct Session {
     pub summary: Option<String>,
     #[serde(default)]
     pub todos: Vec<Todo>,
+    /// The user cleared the todo list; the model is told with the next message.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub todos_cleared: bool,
     #[serde(default)]
     pub changes: Vec<FileChange>,
     #[serde(default)]
@@ -160,6 +163,7 @@ impl Session {
             context_start: 0,
             summary: None,
             todos: Vec::new(),
+            todos_cleared: false,
             changes: Vec::new(),
             files: HashMap::new(),
             instructions: Vec::new(),
@@ -222,6 +226,12 @@ impl Session {
     pub fn delete(id: &str) {
         let _ = std::fs::remove_file(dir().join(format!("{id}.json")));
         let _ = std::fs::remove_file(dir().join(format!("{id}.meta.json")));
+    }
+
+    /// Empties the todo list for the user; their next message tells the model.
+    pub fn clear_todos(&mut self) {
+        self.todos.clear();
+        self.todos_cleared = true;
     }
 
     pub fn push(&mut self, entry: Entry) -> usize {
