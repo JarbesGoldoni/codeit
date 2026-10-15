@@ -33,3 +33,5 @@ pulldown-cmark = { version = "0.13", default-features = false }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 unicode-width = "0.2"
 tokio-util = "0.7"
+axum = { version = "0.8", features = ["ws"] }
+include_dir = "0.7"

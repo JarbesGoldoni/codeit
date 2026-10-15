@@ -1,6 +1,6 @@
 [package]
 name = "codeit"
-description = "A terminal coding agent"
+description = "A coding agent for your terminal and your browser"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -21,3 +21,15 @@ uuid.workspace = true
 pulldown-cmark.workspace = true
 syntect.workspace = true
 unicode-width.workspace = true
+axum.workspace = true
+include_dir.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+whisper-rs = { version = "0.16", optional = true }
+
+[dev-dependencies]
+async-trait.workspace = true
+
+[features]
+# Speech to text in `codeit web`, with whisper.cpp built in (needs cmake, a C++ compiler and libclang).
+voice = ["dep:whisper-rs"]

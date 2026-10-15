@@ -1,13 +1,14 @@
 # codeit
 
-The open source AI coding agent for your terminal, written in Rust.
+The open source AI coding agent for your terminal and your browser, written in Rust.
 
 codeit works like [opencode](https://github.com/anomalyco/opencode): the same capabilities, the same config shapes, and the same providers. It logs in to GitHub Copilot, OpenAI (ChatGPT Plus/Pro or an API key), Anthropic, Google, OpenRouter and the rest of the models.dev catalog, local servers like Ollama, plus Z.ai's GLM Coding Plan. It even uses your opencode logins.
 
 What it adds:
 
 - **A calm, readable UI.** On a soft gray background: your messages and the answers in bubbles, thinking in gray (both shown smoothly as they stream), actions in a faint frame, a side bubble with the context used and your branch, and popups for models, sessions and effort.
-- **Light.** One native binary of about 18 MB, with no Node or Bun runtime behind it.
+- **A web app too.** `codeit web` opens the same agent in a browser tab, served by the same binary: a conversation like a chat, actions you can open, a side panel, plugin panels as dialogs, and voice input transcribed on your machine.
+- **Light.** One native binary, with no Node or Bun runtime behind it.
 
 codeit reads, searches and edits code, runs commands, plans, delegates to subagents, asks before risky actions, and keeps sessions you can resume and undo. It reviews diffs like a pull request (`/review`) and uses a cheaper model to condense long tool output (`/models`).
 
@@ -51,6 +52,7 @@ The providers are opencode's: the models.dev catalog (OpenAI, Anthropic, Google,
 ```bash
 codeit                           # the TUI
 codeit -c                        # the TUI, on the last session in this folder
+codeit web                       # the web app, in your browser (see Web app)
 codeit run "fix the failing test in src/parser.rs"     # one task, non-interactively
 codeit run -m copilot/claude-sonnet-5 --agent plan "how would you add caching here?"
 codeit sessions                  # sessions started in this folder
@@ -141,6 +143,41 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 | `/mcp [login\|logout\|reconnect name]` | a list of the MCP servers and their state (green on, red off, yellow connecting, bright red broken): space turns one on or off for this run; log in to one that uses OAuth |
 | `/help` | list commands and keys |
 | `/exit` | exit codeit |
+
+## Web app
+
+`codeit web` starts codeit as a small server on `http://localhost:7317` (or the next free port; `--port` picks another) and opens it in your browser. It is the same agent, sessions, config and logins as the TUI; the page is built into the binary. `-c` opens it on the last session in this folder, `--no-open` doesn't open the browser. Ctrl+C stops it.
+
+- **The conversation** reads like a chat: your messages in bubbles, the answers as formatted text (tables, highlighted code with a copy button), thinking folded under "Thinking". The agent's actions are rows in a frame (`Edit calc.py  +1 −1`, `Run cargo test  14 passed`, `Run …  exit 101` in red); click one to see the command, its output or the diff. A running command shows its last lines.
+- **The message box**: Enter sends (and queues while codeit works; ↑ takes the last queued one back), Shift+Enter is a new line, `/` lists the commands, Tab switches build ↔ plan, Esc stops the answer. Below it: the agent, the model, the effort, the approvals mode (auto or ask first), the context used and the microphone. Paste or drop an image to attach it.
+- **Questions and permissions** show above the message box: `y` yes, `a` always in this session, `n` no (and say what to do instead).
+- **The sidebar** lists this folder's sessions (working ones spin, ones waiting for you say so) and each plugin with its commands. The side panel shows the context, the branch, the todo list, the plugins' status and the browser logins.
+- **Plugin panels** (`/tog-…`-style commands) open as dialogs, with their rows, keys and inputs, marked with the plugin's name.
+- **Keys:** Ctrl/⌘+K sessions, Ctrl/⌘+Shift+M models, Ctrl/⌘+Shift+O new session, Ctrl+Shift+Space talk.
+
+Sessions keep running on the server: reload the page, or open it in a second tab, and you see the same thing, questions included. Closing the tab doesn't stop a turn; stopping the server does.
+
+The server only answers on `localhost`, and only to its own page and to codeit's browser extension (it checks the `Host` and `Origin` headers), since whoever can talk to it can run commands. On WSL, open the address in your Windows browser: WSL forwards `localhost`.
+
+### Voice
+
+Click the microphone (or press Ctrl+Shift+Space), talk, and click it again: the text goes into the message box for you to check before sending. The browser records; codeit transcribes with [Whisper](https://github.com/ggml-org/whisper.cpp) on your machine, so nothing leaves it. The first time, codeit downloads the model (`base.en`, 142 MB, to `~/.local/share/codeit/whisper/`); the Voice button at the bottom left picks another (`tiny.en` is the fastest, the ones without `.en` hear other languages) and the language.
+
+Whisper comes in one of two ways:
+
+- **Built in:** install codeit with `--features voice`. That builds whisper.cpp, which needs `cmake`, a C++ compiler and libclang (`sudo apt install cmake build-essential libclang-dev` on Ubuntu; `brew install cmake` on macOS).
+- **whisper.cpp's own `whisper-cli`** on your PATH: codeit uses it when it isn't built in.
+
+Where Hugging Face can't be reached, download a `ggml-*.bin` model elsewhere and point `CODEIT_WHISPER_MODEL` at it.
+
+### Browser extension
+
+Some plugins need cookies from sites you are logged in to in your browser. Instead of copying them by hand, codeit's extension (`browser-extension/`) sends them as they change:
+
+1. Open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, click **Load unpacked** and pick the `browser-extension` folder (on WSL, copy it to a Windows folder first).
+2. Run `codeit web`: the extension connects within a minute (its popup shows the state, and changes the port).
+
+It asks codeit which sites plugins want and which cookies (by name), reads only those, and sends them to codeit on `localhost` when they change; the plugin says whether the login works. To keep logins alive, it loads each site's page in the background now and then, and when a plugin says a login stopped working, it reloads the site (in a background tab), which often renews it. So you log in once in the morning, and codeit stays connected. Cookie values only go to the plugin; codeit never shows or logs them. The Browser button at the bottom left lists the sites and their state.
 
 ## Code review
 
@@ -244,7 +281,9 @@ Plugins live in their own repos and build their own binary: a Rust crate that de
 
 An extension is a Rust value implementing `codeit_harness::extension::Extension`. It can change the config at startup (add skill folders, instruction files, commands, MCP servers), add to the system prompt, set environment variables for every bash command, and add tools, like opencode plugins' `config`, `experimental.chat.system.transform` and `shell.env` hooks.
 
-It can show a few words in the footer (a quota, say), refreshed at start, every 5 minutes and after a turn. It can also add slash commands that open a **panel**. The extension answers each action (opened, Enter on a row, one of its keys, text typed, a poll) with a reply: a panel (titled sections of rows, each with a tone, an optional bar and detail lines, plus the keys it handles), a request for a line of text (optionally masked), a prompt to send (optionally in a task's own session), or a notice. The interface draws it; the extension never touches the UI, so it would work the same in another interface.
+It can show a few words in the footer (a quota, say), refreshed at start, every 5 minutes and after a turn. It can also add slash commands that open a **panel**. The extension answers each action (opened, Enter on a row, one of its keys, text typed, a poll) with a reply: a panel (titled sections of rows, each with a tone, an optional bar and detail lines, plus the keys it handles), a request for a line of text (optionally masked), a prompt to send (optionally in a task's own session), or a notice. The interface draws it; the extension never touches the UI, so the same panel works in the TUI and in the web app.
+
+It can also ask for **cookies from the browser** (`sites`: a page of the site, the cookie names, how often to keep it alive) and get them through `cookies` whenever they change, answering whether the login works (see Browser extension). `crates/codeit/examples/site_cookies.rs` is a small example.
 
 ## Configuration
 
@@ -317,7 +356,21 @@ cargo clippy --all-targets
 cargo fmt --all
 ```
 
-To see the interface without spending requests, run `CODEIT_DEMO=1 codeit` in a scratch folder with `printf 'def add(a, b):\n    return a - b\n' > calc.py`, pick a `demo` model, and send anything: it plays a short scripted session (reads, an edit, a long failing command, a passing one, a reply) through the real harness. It is in `crates/codeit-providers/src/demo.rs`.
+To see the interface without spending requests, run `CODEIT_DEMO=1 codeit` (or `CODEIT_DEMO=1 codeit web`) in a scratch folder with `printf 'def add(a, b):\n    return a - b\n' > calc.py`, pick a `demo` model, and send anything: it plays a short scripted session (reads, an edit, a long failing command, a passing one, a reply) through the real harness. It is in `crates/codeit-providers/src/demo.rs`.
+
+**The web app** is a React app in `web/`, built with [Bun](https://bun.sh) into `crates/codeit/web-dist/`, which the binary embeds; the built files are committed, so building codeit doesn't need Bun. After changing it:
+
+```bash
+cd web
+bun install
+bun test src        # the timeline, formatting and audio helpers
+bun run build       # type-checks, then writes crates/codeit/web-dist/
+bun run dev         # hot reload on :5317, talking to a `codeit web --no-open` on :7317
+```
+
+The server side is `crates/codeit/src/web/`: `mod.rs` (the WebSocket protocol, sessions and turns), `timeline.rs` (a session's items and the changes sent to the page), `voice.rs`, `bridge.rs` (the browser extension) and `panel.rs`.
+
+**The browser extension** has no build step. `bun test` in `browser-extension/` tests its logic; `bun run e2e` loads it into Playwright's Chromium against `codeit web` running the `site_cookies` example (`cargo build -p codeit --example site_cookies` first; `bunx playwright install chromium` once).
 
 `crates/codeit-harness/tests/agent_loop.rs` runs the whole loop against a scripted provider: tool calls, permissions, subagents, plan mode, undo. Provider wire formats have unit tests next to them. To change the system prompt or a tool description, edit `crates/codeit-harness/src/prompts/` or the tool's `spec`; keep them short, since they are sent with every request.
 
@@ -334,7 +387,10 @@ crates/
   codeit-harness/      the agent: loop, tools, permissions, sessions, context, MCP, extension API
     src/tools/         read, write, edit, apply_patch, bash, grep, glob, todo, task, skill, webfetch, question
     src/prompts/       the system prompt and the other prompts, as Markdown
-  codeit/              the TUI binary and the non-interactive commands
+  codeit/              the TUI, the web server (src/web/) and the non-interactive commands
+    web-dist/          the web app, built from web/ (committed)
+web/                   the web app's source (React, built with Bun)
+browser-extension/     the browser extension that sends cookies to codeit
 ```
 
 ## License

@@ -1,0 +1,12 @@
+{
+  "name": "codeit-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test lib.test.js",
+    "e2e": "bun run e2e.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

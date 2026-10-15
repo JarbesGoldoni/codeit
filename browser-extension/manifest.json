@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "codeit bridge",
+  "version": "0.1.0",
+  "description": "Keeps codeit logged in to the sites its plugins use: sends their cookies to codeit on this computer as they change, and loads the sites now and then so logins don't expire.",
+  "minimum_chrome_version": "116",
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "codeit bridge" },
+  "options_ui": { "page": "popup.html", "open_in_tab": false },
+  "permissions": ["cookies", "alarms", "storage", "tabs"],
+  "host_permissions": ["http://*/*", "https://*/*"]
+}

@@ -13,12 +13,16 @@ use tokio_util::sync::CancellationToken;
 use crate::state::State;
 
 pub const USAGE: &str = "\
-codeit: a terminal coding agent
+codeit: a coding agent for your terminal and your browser
 
 Usage:
   codeit                                   Open the TUI
   codeit -c, --continue                    Open the TUI on the last session in this folder
   codeit -s, --session ID                  Open the TUI on a session
+  codeit web [options]                     Open codeit in your browser (a server on localhost)
+      -p, --port N                       (default: 7317, or the next free one)
+      --no-open                          don't open the browser
+      -c, --continue / -s, --session ID  open on the last session in this folder, or on one
   codeit run [options] PROMPT...           Run the agent on one prompt and print what it does
       -m, --model PROVIDER/MODEL         (default: the last model used)
       -e, --effort LEVEL
@@ -109,6 +113,7 @@ pub async fn run(args: Vec<String>) -> Result<()> {
             }
         }
         ["run", rest @ ..] => run_once(rest).await?,
+        ["web", rest @ ..] => crate::web::run(rest).await?,
         ["help" | "-h" | "--help"] => println!("{USAGE}"),
         ["--version" | "-V"] => println!("codeit {}", env!("CARGO_PKG_VERSION")),
         _ => bail!("unknown command\n\n{USAGE}"),

@@ -1,4 +1,5 @@
-//! What codeit remembers between runs: the last model, effort and approval mode.
+//! What codeit remembers between runs: the last model, effort and approval mode, and the voice
+//! settings of `codeit web`.
 
 use codeit_harness::session::Approval;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,12 @@ pub struct State {
     /// How much of the agent's actions to show (ctrl+o): 0 folded, 1 list, 2 open.
     #[serde(default = "list")]
     pub actions: usize,
+    /// The Whisper model `codeit web` transcribes with (see `web::voice`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_model: Option<String>,
+    /// The language spoken: `auto`, or a code like `en` or `pt`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_language: Option<String>,
 }
 
 fn list() -> usize {
@@ -25,7 +32,14 @@ fn path() -> std::path::PathBuf {
 
 impl Default for State {
     fn default() -> Self {
-        Self { model: None, effort: None, approval: Approval::default(), actions: 1 }
+        Self {
+            model: None,
+            effort: None,
+            approval: Approval::default(),
+            actions: 1,
+            voice_model: None,
+            voice_language: None,
+        }
     }
 }
 

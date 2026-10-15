@@ -7,6 +7,11 @@
 //! It can show a few words in the footer ([`Extension::status`]), and add slash commands that open a **panel**: a titled list of sections and rows,
 //! each with a tone, plus the keys the panel handles. The interface draws it; the extension
 //! only answers [`Action`]s with a [`Reply`], so the same extension works in any interface.
+//!
+//! It can also ask for a site's cookies from your browser ([`Extension::sites`]): with
+//! `codeit web` and its browser extension running, codeit reads them as they change, hands them
+//! to [`Extension::cookies`], and keeps the site's login alive by loading one of its pages now
+//! and then.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -48,6 +53,59 @@ pub trait Extension: Send + Sync {
     async fn act(&self, _command: &str, _action: Action) -> Reply {
         Reply::Close
     }
+
+    /// Sites whose cookies it wants from the browser.
+    async fn sites(&self) -> Vec<Site> {
+        Vec::new()
+    }
+
+    /// The cookies of one of its [`sites`](Extension::sites), sent when they change (and once
+    /// when the browser connects). Says whether the login works with them.
+    async fn cookies(&self, _site: &str, _cookies: Vec<Cookie>) -> SiteStatus {
+        SiteStatus::default()
+    }
+}
+
+/// A site whose login an extension keeps from the browser.
+#[derive(Clone, Debug, Default)]
+pub struct Site {
+    /// Passed back to [`Extension::cookies`].
+    pub id: String,
+    pub title: String,
+    /// A page of the site: its cookies are read for this URL, and it is loaded in the background
+    /// every `keepalive` minutes so the login doesn't expire.
+    pub url: String,
+    /// The cookies wanted, by name (`JSESSIONID.*`: every name starting with `JSESSIONID.`);
+    /// empty for all of the URL's.
+    pub cookies: Vec<String>,
+    pub keepalive: Option<u64>,
+}
+
+impl Site {
+    /// Whether the site wants the cookie called `name`.
+    pub fn wants(&self, name: &str) -> bool {
+        self.cookies.is_empty()
+            || self.cookies.iter().any(|w| match w.strip_suffix('*') {
+                Some(prefix) => name.starts_with(prefix),
+                None => w == name,
+            })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Cookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SiteStatus {
+    /// The login works. When false, the browser reloads the site's page (at most every few
+    /// minutes), which often renews it.
+    pub ok: bool,
+    /// A few words to show: "connected", why it failed.
+    pub detail: String,
 }
 
 #[derive(Clone, Debug)]
@@ -157,5 +215,20 @@ impl Row {
     /// A row that can't be selected.
     pub fn info(label: impl Into<String>, value: impl Into<String>, tone: Tone) -> Self {
         Row { id: None, label: label.into(), value: value.into(), tone, ..Default::default() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sites_want_cookies_by_name_or_prefix() {
+        let site = Site { cookies: vec!["session".into(), "JSESSIONID.*".into()], ..Default::default() };
+        assert!(site.wants("session"));
+        assert!(site.wants("JSESSIONID.abc123"));
+        assert!(!site.wants("sessions"));
+        assert!(!site.wants("theme"));
+        assert!(Site::default().wants("anything"));
     }
 }

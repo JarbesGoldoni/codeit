@@ -3,7 +3,7 @@
 //! Crates:
 //! - `codeit-providers`: model providers behind one trait.
 //! - `codeit-harness`: the agent loop, tools, permissions, sessions and context.
-//! - `codeit` (this one): the TUI and the non-interactive commands.
+//! - `codeit` (this one): the TUI, the web app (`codeit web`) and the non-interactive commands.
 //!
 //! Plugins live in their own crates and build their own binary: a `main` that calls [`main`]
 //! with the providers and extensions they add (see README, Plugins).
@@ -13,6 +13,7 @@ mod export;
 mod login;
 mod state;
 mod tui;
+mod web;
 
 use std::sync::{Arc, OnceLock};
 
