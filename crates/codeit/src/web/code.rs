@@ -1,11 +1,11 @@
 //! The code viewer's API (`POST /api/code`): the projects in the folder codeit started in, their
-//! files (in the working tree or at any commit), branches, commits and diffs, and which commits
-//! you marked reviewed. Read-only: nothing here changes a file or a repository.
+//! files (in the working tree or at any commit), branches, commits and diffs, and what a code
+//! review of the current branch covers. Read-only: nothing here changes a file or a repository.
 //!
 //! Every request names a project by its path relative to that folder (`""` is the folder itself,
 //! or its git root); paths outside it are refused.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -57,10 +57,9 @@ pub enum Req {
         from: Option<String>,
         to: Option<String>,
     },
-    Reviewed {
+    /// The current branch's own commits and where its changes start.
+    Review {
         root: String,
-        hashes: Vec<String>,
-        on: bool,
     },
     Find {
         root: String,
@@ -91,34 +90,9 @@ fn handle(s: &Server, req: Req) -> Result<Value> {
             file(&root, &path, rev.as_deref())?
         }
         Req::Branches { root } => branches(&s.project_dir(&root)?)?,
-        Req::Log { root, rev, skip } => {
-            let dir = s.project_dir(&root)?;
-            let mut v = log(&dir, rev.as_deref(), skip)?;
-            let reviewed = load_reviewed();
-            let mine = reviewed.get(&key(&dir));
-            if let Some(list) = v["commits"].as_array_mut() {
-                for c in list {
-                    let on = mine.is_some_and(|m| c["hash"].as_str().is_some_and(|h| m.iter().any(|x| x == h)));
-                    c["reviewed"] = json!(on);
-                }
-            }
-            v
-        }
+        Req::Log { root, rev, skip } => log(&s.project_dir(&root)?, rev.as_deref(), skip)?,
         Req::Diff { root, from, to } => diff(&s.project_dir(&root)?, from.as_deref(), to.as_deref())?,
-        Req::Reviewed { root, hashes, on } => {
-            let dir = s.project_dir(&root)?;
-            for h in &hashes {
-                check_rev(h)?;
-            }
-            let mut all = load_reviewed();
-            let list = all.entry(key(&dir)).or_default();
-            list.retain(|x| !hashes.contains(x));
-            if on {
-                list.extend(hashes);
-            }
-            save_reviewed(&all)?;
-            json!({"ok": true})
-        }
+        Req::Review { root } => review(&s.project_dir(&root)?)?,
         Req::Find { root, rev, name } => find(&s.project_dir(&root)?, rev.as_deref(), &name)?,
     })
 }
@@ -348,29 +322,36 @@ fn log(root: &Path, rev: Option<&str>, skip: usize) -> Result<Value> {
     }
     let rev = rev.unwrap_or("HEAD");
     check_rev(rev)?;
+    let (commits, more) = commits(root, &[rev], skip, false);
+    let uncommitted = if skip == 0 { uncommitted(root) } else { 0 };
+    Ok(json!({"commits": commits, "more": more, "uncommitted": uncommitted}))
+}
+
+/// A page of `git log` for these revisions, newest first, with each commit's files if asked.
+fn commits(root: &Path, revs: &[&str], skip: usize, files: bool) -> (Vec<Value>, bool) {
     let (n, s) = ((PAGE + 1).to_string(), skip.to_string());
-    let out = git(
-        root,
-        &[
-            "log",
-            rev,
-            "-z",
-            "--max-count",
-            &n,
-            "--skip",
-            &s,
-            "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b",
-            "--",
-        ],
-    )
-    .unwrap_or_default();
-    let mut commits: Vec<Value> = split0(&out)
+    let mut args = vec![
+        "log",
+        "--max-count",
+        &n,
+        "--skip",
+        &s,
+        "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f%b%x1f",
+    ];
+    if files {
+        args.push("--name-only");
+    }
+    args.extend(revs);
+    args.push("--");
+    let out = git_text(root, &args).unwrap_or_default();
+    let mut list: Vec<Value> = out
+        .split('\x1e')
         .filter_map(|rec| {
-            let f: Vec<&str> = rec.splitn(8, '\x1f').collect();
-            if f.len() < 8 {
+            let f: Vec<&str> = rec.splitn(9, '\x1f').collect();
+            if f.len() < 9 {
                 return None;
             }
-            Some(json!({
+            let mut c = json!({
                 "hash": f[0].trim(),
                 "parents": f[1].split_whitespace().collect::<Vec<_>>(),
                 "author": f[2],
@@ -379,19 +360,96 @@ fn log(root: &Path, rev: Option<&str>, skip: usize) -> Result<Value> {
                 "refs": f[5].split(", ").filter(|r| !r.is_empty()).collect::<Vec<_>>(),
                 "subject": f[6],
                 "body": f[7].trim_end(),
-            }))
+            });
+            if files {
+                c["files"] = json!(f[8].lines().filter(|l| !l.is_empty()).collect::<Vec<_>>());
+            }
+            Some(c)
         })
         .collect();
-    let more = commits.len() > PAGE;
-    commits.truncate(PAGE);
-    let uncommitted = if skip == 0 {
-        git(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])
-            .map(|o| split0(&o).filter(|e| e.len() > 3).count())
-            .unwrap_or(0)
-    } else {
-        0
+    let more = list.len() > PAGE;
+    list.truncate(PAGE);
+    (list, more)
+}
+
+fn uncommitted(root: &Path) -> usize {
+    git(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .map(|o| split0(&o).filter(|e| e.len() > 3).count())
+        .unwrap_or(0)
+}
+
+/// What a code review of the current branch covers: the commits only it has (on no other branch,
+/// local or remote, but its own upstream), newest first, and `base`, the commit its changes start
+/// from (the newest one it shares with another branch). On the main branch it has none: the
+/// review is of the uncommitted changes.
+fn review(root: &Path) -> Result<Value> {
+    if !is_git(root) {
+        bail!("not a git repository");
+    }
+    let uncommitted = uncommitted(root);
+    let branch = git_text(root, &["symbolic-ref", "--short", "-q", "HEAD"]).ok().map(|b| b.trim().to_string());
+    let branch = branch.filter(|b| !b.is_empty());
+    let none = |base: &str, main: bool| json!({"branch": branch, "main": main, "base": base, "parent": null, "commits": [], "more": false, "uncommitted": uncommitted});
+    if git(root, &["rev-parse", "--verify", "-q", "HEAD"]).is_err() {
+        return Ok(none(EMPTY_TREE, false));
+    }
+    let main = branch.as_deref().is_some_and(|b| {
+        let origin = git_text(root, &["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"]).unwrap_or_default();
+        b == "main" || b == "master" || origin.trim() == format!("origin/{b}")
+    });
+    if main {
+        return Ok(none("HEAD", true));
+    }
+    // HEAD, but nothing another branch has.
+    let mut others = vec!["--not".to_string()];
+    if let Some(b) = &branch {
+        others.push(format!("--exclude={b}"));
+    }
+    others.push("--branches".into());
+    if let Some(b) = &branch {
+        others.push(format!("--exclude=*/{b}"));
+    }
+    others.push("--remotes".into());
+    let mut revs = vec!["HEAD"];
+    revs.extend(others.iter().map(String::as_str));
+
+    let mut args = vec!["rev-list", "--boundary"];
+    args.extend(&revs);
+    let listed = git_text(root, &args)?;
+    let boundary: Vec<&str> = listed.lines().filter_map(|l| l.strip_prefix('-')).collect();
+    if listed.lines().all(|l| l.starts_with('-')) {
+        return Ok(none("HEAD", false));
+    }
+    let base = match boundary.as_slice() {
+        // Its whole history: from the empty tree.
+        [] => EMPTY_TREE.to_string(),
+        [one] => one.to_string(),
+        // Another branch merged in: from the newest commit shared, as a pull request would.
+        many => {
+            let mut args = vec!["log", "--no-walk=sorted", "--format=%H"];
+            args.extend(many);
+            git_text(root, &args)?.lines().next().unwrap_or_default().to_string()
+        }
     };
-    Ok(json!({"commits": commits, "more": more, "uncommitted": uncommitted}))
+    let (commits, more) = commits(root, &revs, 0, true);
+    // The branch it came from, for the title.
+    let mine = |n: &&str| branch.as_deref().is_some_and(|b| *n == b || n.ends_with(&format!("/{b}")));
+    let parent = if base == EMPTY_TREE {
+        None
+    } else {
+        let out = git_text(
+            root,
+            &["for-each-ref", "--contains", &base, "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        )
+        .unwrap_or_default();
+        let names: Vec<&str> = out.lines().filter(|n| !n.ends_with("/HEAD") && !mine(n)).collect();
+        let main = ["main", "master", "origin/main", "origin/master"];
+        names.iter().find(|n| main.contains(n)).or(names.first()).map(|n| n.to_string())
+    };
+    Ok(json!({
+        "branch": branch, "main": false, "base": base, "parent": parent,
+        "commits": commits, "more": more, "uncommitted": uncommitted,
+    }))
 }
 
 fn diff(root: &Path, from: Option<&str>, to: Option<&str>) -> Result<Value> {
@@ -532,29 +590,6 @@ fn regex_escape(s: &str) -> String {
     s.chars().map(|c| if c == '$' { "\\$".to_string() } else { c.to_string() }).collect()
 }
 
-// ── commits marked reviewed, per repository ───────────────────────────────
-
-fn reviewed_path() -> PathBuf {
-    codeit_providers::data_dir().join("reviewed.json")
-}
-
-fn key(dir: &Path) -> String {
-    util::git_root(dir).unwrap_or_else(|| dir.to_path_buf()).to_string_lossy().into_owned()
-}
-
-fn load_reviewed() -> HashMap<String, Vec<String>> {
-    std::fs::read(reviewed_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-}
-
-fn save_reviewed(all: &HashMap<String, Vec<String>>) -> Result<()> {
-    let p = reviewed_path();
-    if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
-    }
-    std::fs::write(&p, serde_json::to_vec(all)?)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,6 +645,49 @@ mod tests {
         let f = find(&d, None, "add").unwrap();
         assert_eq!(f["defs"], json!([{"path": "src/lib.rs", "line": 1, "text": "pub fn add(a: i32) -> i32 {"}]));
         assert_eq!(f["refs"].as_array().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn reviews_only_the_branchs_own_commits() {
+        let d = repo();
+        let run = |args: &[&str]| {
+            let ok = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(&d)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        // On main: only the uncommitted changes.
+        let r = review(&d).unwrap();
+        assert_eq!(
+            (r["main"].clone(), r["base"].clone(), r["uncommitted"].clone()),
+            (json!(true), json!("HEAD"), json!(1))
+        );
+
+        let main_head = git_text(&d, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        run(&["checkout", "-q", "-b", "feature"]);
+        let fresh = review(&d).unwrap();
+        assert_eq!((fresh["base"].clone(), fresh["commits"].clone()), (json!("HEAD"), json!([])));
+
+        run(&["add", "new.txt"]);
+        run(&["commit", "-q", "-m", "on feature"]);
+        let feature_head = git_text(&d, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        // A branch from the feature branch: only what it adds, whichever branch it came from.
+        run(&["checkout", "-q", "-b", "stacked"]);
+        std::fs::write(d.join("more.txt"), "more\n").unwrap();
+        run(&["add", "more.txt"]);
+        run(&["commit", "-q", "-m", "on stacked"]);
+        let r = review(&d).unwrap();
+        let subjects: Vec<&str> =
+            r["commits"].as_array().unwrap().iter().map(|c| c["subject"].as_str().unwrap()).collect();
+        assert_eq!(subjects, ["on stacked"]);
+        assert_eq!(r["commits"][0]["files"], json!(["more.txt"]));
+        assert_eq!((r["base"].as_str().unwrap(), r["parent"].as_str().unwrap()), (feature_head.as_str(), "feature"));
+        assert_ne!(feature_head, main_head);
         let _ = std::fs::remove_dir_all(&d);
     }
 }

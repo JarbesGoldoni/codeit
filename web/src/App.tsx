@@ -23,32 +23,35 @@ function Header({ side, toggleSide }: { side: boolean; toggleSide: () => void })
   };
   return (
     <header className="header">
-      {editing ? (
-        <input
-          className="titleedit"
-          autoFocus
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onBlur={save}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") save();
-            if (e.key === "Escape") setEditing(false);
-          }}
-        />
-      ) : (
-        <button
-          className="title"
-          title="Rename"
-          onClick={() => {
-            setTitle(session.title);
-            setEditing(true);
-          }}
-        >
-          {session.title || "New session"}
-        </button>
-      )}
-      <ProjectPicker compact={view === "code"} />
-      <span className="spacer" />
+      <div className="headmain">
+        {editing ? (
+          <input
+            className="titleedit"
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={save}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") save();
+              if (e.key === "Escape") setEditing(false);
+            }}
+          />
+        ) : (
+          <button
+            className="title"
+            title="Rename"
+            onClick={() => {
+              setTitle(session.title);
+              setEditing(true);
+            }}
+          >
+            {session.title || "New session"}
+          </button>
+        )}
+        <div className="headsub">
+          <ProjectPicker compact={view === "code"} />
+        </div>
+      </div>
       {view === "chat" &&
         status.map((p) => (
         <span key={p.plugin} className="hstatus" title={`from the ${p.plugin} plugin`}>

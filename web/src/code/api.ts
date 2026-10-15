@@ -27,7 +27,22 @@ export interface Commit {
   refs: string[];
   subject: string;
   body: string;
-  reviewed: boolean;
+  /** The files it changed (in a review). */
+  files?: string[];
+}
+
+/** What a code review of the current branch covers (`base`: where its changes start). */
+export interface ReviewInfo {
+  branch: string | null;
+  /** On the main branch: only the uncommitted changes are reviewed. */
+  main: boolean;
+  base: string;
+  /** The branch it came from. */
+  parent: string | null;
+  /** The commits only this branch has, newest first. */
+  commits: Commit[];
+  more: boolean;
+  uncommitted: number;
 }
 
 export interface FileText {
@@ -71,7 +86,7 @@ export const api = {
   log: (root: string, rev: string | null, skip = 0) =>
     call<{ commits: Commit[]; more: boolean; uncommitted: number }>({ op: "log", root, rev, skip }),
   diff: (root: string, from: string | null, to: string | null) => call<DiffResult>({ op: "diff", root, from, to }),
-  reviewed: (root: string, hashes: string[], on: boolean) => call<{ ok: boolean }>({ op: "reviewed", root, hashes, on }),
+  review: (root: string) => call<ReviewInfo>({ op: "review", root }),
   find: (root: string, rev: string | null, name: string) =>
     call<{ defs: Match[]; refs: Match[] }>({ op: "find", root, rev, name }),
 };

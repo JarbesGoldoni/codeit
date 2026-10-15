@@ -100,6 +100,10 @@ select {
   outline: none;
   width: 100%;
 }
+input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+}
 input:focus,
 textarea:focus,
 select:focus {
@@ -427,9 +431,40 @@ a {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 6px 16px 6px 10px;
   border-bottom: 1px solid var(--border);
   min-height: 50px;
+}
+/* The title, and under it the folder and branch: the buttons on the right never overlap them. */
+.headmain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.headmain .title,
+.headmain .titleedit {
+  max-width: 100%;
+}
+.headsub {
+  max-width: 100%;
+  min-width: 0;
+}
+.headsub .projpicker {
+  max-width: 100%;
+}
+.headsub .projchip {
+  border: none;
+  padding: 1px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 100%;
+}
+.headsub .projchip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .title {
   font-weight: 600;
@@ -489,6 +524,30 @@ a {
 .banner.warn {
   background: color-mix(in srgb, var(--warn) 14%, transparent);
   color: var(--warn);
+}
+
+.ctxnote {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+}
+.ctxnotebtns {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+@media (max-width: 760px) {
+  .ctxnote {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 /* ── conversation ───────────────────────────────────────────────────────── */
@@ -717,23 +776,22 @@ code.inline {
   overflow-y: auto;
 }
 
+/* Calls are steps between the text: a line each, opened on a click. */
 .steps {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface) 60%, transparent);
-  overflow: hidden;
-}
-.tool + .tool {
-  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  margin: -4px 0;
 }
 .toolhead {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 12px;
+  padding: 3px 6px 3px 0;
   font-size: 13.5px;
-  min-height: 34px;
+  min-height: 26px;
+  border-radius: 6px;
+  text-align: left;
 }
 .toolhead:not(:disabled):hover {
   background: color-mix(in srgb, var(--text) 4%, transparent);
@@ -742,26 +800,36 @@ code.inline {
   width: 16px;
   display: grid;
   place-items: center;
-  color: var(--ok);
-  font-size: 12px;
   flex: none;
 }
-.tool.failed .toolicon {
-  color: var(--bad);
+.tooldot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.tool.failed .tooldot {
+  background: var(--bad);
 }
 .toolverb {
   font-weight: 600;
   flex: none;
 }
-.tooltitle {
-  font-family: var(--mono);
-  font-size: 12.5px;
-  color: var(--muted);
+.tooltitle,
+.tooldesc {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tooltitle {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.tooldesc {
+  color: var(--text);
 }
 .toolres {
   font-size: 12.5px;
@@ -789,7 +857,7 @@ code.inline {
 .tooldetail pre,
 .askdetail {
   margin: 0;
-  padding: 8px 12px 10px 36px;
+  padding: 8px 12px 10px 12px;
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--muted);
@@ -799,12 +867,16 @@ code.inline {
   overflow-y: auto;
 }
 .live {
-  padding-top: 0;
-  max-height: 120px;
+  padding: 0 12px 4px 24px;
+  max-height: 90px;
+  color: var(--faint);
 }
 .toolbody {
-  border-top: 1px dashed var(--border);
+  margin: 2px 0 8px 7px;
+  border-left: 2px solid var(--border);
+  border-radius: 0 8px 8px 0;
   background: color-mix(in srgb, var(--code) 50%, transparent);
+  overflow: hidden;
 }
 .tooldetail {
   position: relative;
@@ -825,7 +897,7 @@ code.inline {
   padding-right: 0;
 }
 .diff div {
-  padding: 0 12px 0 36px;
+  padding: 0 12px;
 }
 .diff .add {
   background: var(--add-bg);
@@ -842,7 +914,7 @@ code.inline {
   color: var(--faint);
 }
 .digest {
-  padding: 8px 12px 10px 36px;
+  padding: 8px 12px 10px 12px;
   font-size: 12.5px;
   color: var(--muted);
 }
@@ -2162,17 +2234,6 @@ textarea.secret {
   max-width: 100%;
 }
 
-.commits {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-}
-.clist {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 80px;
-}
 .crow {
   display: flex;
   gap: 8px;
@@ -2229,26 +2290,12 @@ textarea.secret {
   font-weight: 600;
   color: var(--git-mod);
 }
-.changedlist {
-  max-height: 40%;
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
-  padding-bottom: 8px;
-}
-.changedlist .sidetitle {
-  padding: 8px 10px 4px;
-}
 
 .diffpane {
   flex: 1;
   overflow: auto;
   min-height: 0;
   padding: 0 16px 40px;
-}
-.commithead {
-  padding: 14px 0 10px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 12px;
 }
 .ctitle {
   font-size: 16px;
@@ -2270,6 +2317,7 @@ textarea.secret {
   margin-top: 8px;
 }
 .filediff {
+  container-type: inline-size;
   border: 1px solid var(--border);
   border-radius: 8px;
   margin-bottom: 14px;
@@ -2359,6 +2407,248 @@ textarea.secret {
 }
 .dline.del .mk {
   color: var(--bad);
+}
+
+/* ── code review ── */
+
+.wbside.review .rsection {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.rfiles {
+  flex: 3 1 0;
+}
+.rcommits {
+  flex: 2 1 0;
+  border-top: 1px solid var(--border);
+}
+.wbside.review .sidetitle {
+  padding: 10px 10px 6px;
+}
+.sidetitle .count,
+.btn .count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--muted);
+  letter-spacing: 0;
+}
+.btn.primary .count {
+  background: color-mix(in srgb, var(--accent-ink) 25%, transparent);
+  color: inherit;
+  margin-left: 2px;
+}
+.rprogress {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.rlist {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: 6px;
+}
+.rlist .trow.file {
+  padding-left: 8px;
+}
+.rlist .trow input[type="checkbox"] {
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+.nobox {
+  width: 13px;
+  flex: none;
+}
+.rlist .trow.viewed .tname {
+  color: var(--muted);
+}
+.rlist .gdot {
+  margin-left: 0;
+  color: var(--warn);
+}
+.rnotes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11.5px;
+  color: var(--accent);
+}
+.crow.old .csubject {
+  color: var(--muted);
+}
+.historybtn,
+.historyhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.historybtn:hover {
+  color: var(--text);
+  background: var(--tree-hover);
+}
+.historyhead {
+  border-top: 1px dashed var(--border);
+  margin-top: 4px;
+}
+.reviewhead,
+.scopebar {
+  padding: 14px 0 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.scopebar {
+  padding-top: 0;
+}
+.scopebar.history .sbtitle {
+  color: var(--muted);
+}
+.rhtitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sbtitle {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.branchchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font: 12px var(--mono);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.branchchip.subtle {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--muted);
+}
+.rbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rbartrack {
+  width: 90px;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  overflow: hidden;
+}
+.rbartrack span {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+.submitwrap {
+  position: relative;
+}
+.submitpop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.submitpop textarea,
+.rcomment textarea {
+  width: 100%;
+  resize: vertical;
+  font: 13px/1.45 var(--sans);
+  padding: 6px 8px;
+}
+.rcbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.viewedbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.viewedbox input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.viewedbox.on {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.filediff.viewed .filehead {
+  opacity: 0.75;
+}
+.fchanged {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 4px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.filecomments {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.rcomment {
+  position: sticky;
+  left: 12px;
+  width: min(680px, calc(100cqw - 24px));
+  box-sizing: border-box;
+  margin: 6px 0 8px 12px;
+  padding: 8px 10px;
+  font: 13px/1.45 var(--sans);
+  white-space: normal;
+  background: var(--raised);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+}
+.filecomments .rcomment {
+  margin-left: 0;
+}
+.rcomment.form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rchead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+}
+.rctext {
+  margin-top: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .workbench ::-webkit-scrollbar {

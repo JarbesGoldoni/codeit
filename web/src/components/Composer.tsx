@@ -158,6 +158,62 @@ function useMatches(query: string) {
   }, [commands, query]);
 }
 
+/** At this share of the context, a note suggests /compact: past it, every message resends a
+ * long conversation (and many models charge more for a long context). */
+const CONTEXT_NOTE = 0.2;
+
+function ContextNotice() {
+  const id = useStore((s) => s.session?.id ?? null);
+  const context = useStore((s) => s.session?.context ?? null);
+  const busy = useStore((s) => s.session?.busy ?? false);
+  const [dismissed, setDismissed] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("codeit.ctxnote") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+  const share = context ? context[0] / context[1] : 0;
+  const keep = (list: string[]) => {
+    setDismissed(list);
+    try {
+      localStorage.setItem("codeit.ctxnote", JSON.stringify(list.slice(-200)));
+    } catch {
+      // For this tab only.
+    }
+  };
+  // Compacted (or undone) below it: the note may come back later.
+  useEffect(() => {
+    if (id && context && share < CONTEXT_NOTE && dismissed.includes(id)) keep(dismissed.filter((d) => d !== id));
+  }, [id, share]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!id || !context || share < CONTEXT_NOTE || dismissed.includes(id)) return null;
+  return (
+    <div className="ctxnote">
+      <div>
+        <b>{Math.round(share * 100)}% of the context is used</b>{" "}
+        <span className="muted">
+          ({tokens(context[0])} of {tokens(context[1])} tokens)
+        </span>
+        . Each message resends all of it, so it costs more from here. <code>/compact</code> sums it up and carries on
+        lighter.
+      </div>
+      <div className="ctxnotebtns">
+        <button
+          className="btn small primary"
+          disabled={busy}
+          title={busy ? "After this turn" : undefined}
+          onClick={() => store.submit("/compact")}
+        >
+          Compact now
+        </button>
+        <button className="btn small" onClick={() => keep([...dismissed, id])}>
+          Not now
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Toolbar({ voice }: { voice: ReturnType<typeof useVoice> }) {
   const session = useStore((s) => s.session);
   const agents = useStore((s) => s.agents);
@@ -405,6 +461,7 @@ export function Composer() {
             <span className="muted small">↑ takes the last one back</span>
           </div>
         )}
+        <ContextNotice />
         {voice.partial && <div className="heard">{voice.partial}</div>}
         {menuOpen && <CommandMenu query={slash ?? ""} selected={Math.min(menuSel, matches.length - 1)} onPick={pick} />}
         <div

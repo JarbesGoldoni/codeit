@@ -39,36 +39,46 @@ function Diff({ diff }: { diff: string }) {
   );
 }
 
-/** A command the call ran, a pattern it searched for: what the title leaves out. */
-function detailOf(t: Tool): string | null {
+/** What a call's line says: a command by what it does (its description), else the verb and
+ * the call's title. */
+function labelOf(t: Tool): { text: string; verb: string | null } {
+  const d = t.input?.description;
+  if (t.name === "bash" && typeof d === "string" && d.trim()) return { text: d.trim(), verb: null };
+  return { text: t.title, verb: verb(t.name) };
+}
+
+/** A command the call ran, a pattern it searched for: what the line leaves out. */
+function detailOf(t: Tool, shown: string): string | null {
   const input = t.input ?? {};
   for (const k of ["command", "pattern", "url", "prompt", "description"]) {
     const v = input[k];
-    if (typeof v === "string" && v.trim() && v !== t.title) return v;
+    if (typeof v === "string" && v.trim() && v !== shown && v !== t.title) return v;
   }
-  return null;
+  return t.name === "bash" && t.title !== shown ? t.title : null;
 }
 
+/** One line per call, as a step in the conversation; click it for what it ran and got. */
 const ToolRow = memo(function ToolRow({ t }: { t: Tool }) {
   const [open, setOpen] = useState(false);
   const running = t.state === "running" || t.state === "pending";
   const failed = didFail(t);
   const res = result(t);
-  const detail = detailOf(t);
+  const label = labelOf(t);
+  const detail = detailOf(t, label.text);
   const body = t.diff || t.output || t.live || detail;
   return (
     <div className={`tool ${failed ? "failed" : t.state}${open ? " open" : ""}`}>
       <button className="toolhead" onClick={() => body && setOpen(!open)} disabled={!body}>
-        <span className="toolicon">{running ? <Spinner /> : failed ? "✕" : "✓"}</span>
-        <span className="toolverb">{verb(t.name)}</span>
-        <span className="tooltitle" title={t.title}>
-          {t.title || (t.state === "pending" ? "…" : "")}
+        <span className="toolicon">{running ? <Spinner /> : <span className="tooldot" />}</span>
+        {label.verb && <span className="toolverb">{label.verb}</span>}
+        <span className={label.verb ? "tooltitle" : "tooldesc"} title={detail ?? t.title}>
+          {label.text || (t.state === "pending" ? "…" : "")}
         </span>
         <span className={`toolres${failed ? " bad" : ""}`}>{res}</span>
         {t.secs != null && t.secs >= 0.5 && <span className="tooltime">{duration(t.secs)}</span>}
         {body && <Chevron open={open} />}
       </button>
-      {running && t.live && !open && <pre className="live">{t.live.split("\n").slice(-6).join("\n")}</pre>}
+      {running && t.live && !open && <pre className="live">{t.live.split("\n").slice(-4).join("\n")}</pre>}
       {open && (
         <div className="toolbody">
           {detail && (

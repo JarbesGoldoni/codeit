@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { gitOf, store, useStore } from "../store";
 import { ago } from "../format";
-import { api, type Branch, type Commit, type FileText, type Match, type Project } from "../code/api";
+import { api, type Branch, type FileText, type Match, type Project } from "../code/api";
 import { buildTree, parents, type TreeNode } from "../code/tree";
-import { parseDiff, type DiffFile } from "../code/diff";
 import { languageOf } from "../code/languages";
 import { CodeView, type Selection } from "../code/CodeView";
-import { DiffView } from "../code/DiffView";
 import { FileIcon, FolderIcon, Icon } from "../code/Icon";
 import { setColors, useSkin } from "../code/skin";
+import { Review } from "./Review";
 
-/** git's empty tree: the base of a range that starts at the first commit. */
-const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-const WORKING = "WORKING";
-
-type Mode = "files" | "changes";
+/** Browsing the project freely, or reviewing what the branch changed. */
+type Mode = "files" | "review";
 
 interface Tab {
   path: string;
@@ -61,7 +57,9 @@ export function Workbench() {
   const session = useStore((s) => s.session);
   const git = useStore(gitOf);
   const root = session?.project ?? "";
-  const [mode, setModeState] = useState<Mode>(() => local<Mode>("codeit.code.mode", "files"));
+  const [mode, setModeState] = useState<Mode>(() =>
+    local<string>("codeit.code.mode", "files") === "files" ? "files" : "review",
+  );
   const setMode = (m: Mode) => {
     setModeState(m);
     remember("codeit.code.mode", m);
@@ -81,18 +79,6 @@ export function Workbench() {
   const [filter, setFilter] = useState("");
   const [branches, setBranches] = useState<{ current: string | null; branches: Branch[] }>({ current: null, branches: [] });
 
-  // ── changes ──
-  const [logRev, setLogRev] = useState<string | null>(null);
-  const [commits, setCommits] = useState<Commit[]>([]);
-  const [more, setMore] = useState(false);
-  const [uncommitted, setUncommitted] = useState(0);
-  const [picked, setPicked] = useState<string[]>([]);
-  const [anchor, setAnchor] = useState<string | null>(null);
-  const [diff, setDiff] = useState<{ files: DiffFile[]; cut: boolean; commit: Commit | null } | null>(null);
-  const [diffError, setDiffError] = useState<string | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
-  const [scrollTo, setScrollTo] = useState<string | null>(null);
-
   const [find, setFind] = useState<Find | null>(null);
   const workspace = useStore((s) => s.workspace);
   const tab = tabs[active] ?? null;
@@ -103,9 +89,6 @@ export function Workbench() {
     setTabs([]);
     setActive(0);
     setExpanded(new Set());
-    setLogRev(null);
-    setPicked([]);
-    setDiff(null);
     setFilter("");
   }, [root]);
 
@@ -124,28 +107,10 @@ export function Workbench() {
     api.branches(root).then(setBranches).catch(() => setBranches({ current: null, branches: [] }));
   }, [root]);
 
-  const loadLog = useCallback(
-    (skip = 0) => {
-      api
-        .log(root, logRev, skip)
-        .then((l) => {
-          setCommits((c) => (skip ? [...c, ...l.commits] : l.commits));
-          setMore(l.more);
-          if (!skip) setUncommitted(logRev ? 0 : l.uncommitted);
-        })
-        .catch(() => {
-          setCommits([]);
-          setMore(false);
-        });
-    },
-    [root, logRev],
-  );
-
   // The working tree changes as the agent works: look again when git says so.
   const gitKey = git ? `${git.branch}:${git.added}:${git.changed}` : "";
   useEffect(loadTree, [loadTree, gitKey]);
   useEffect(loadBranches, [loadBranches, gitKey]);
-  useEffect(() => loadLog(0), [loadLog, gitKey]);
 
   // The open file.
   useEffect(() => {
@@ -166,51 +131,6 @@ export function Workbench() {
       live = false;
     };
   }, [root, tab?.path, tab?.rev, tab ? gitKey : ""]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // The picked commits' changes.
-  const pickedKey = picked.join(",");
-  useEffect(() => {
-    if (!picked.length) {
-      setDiff(null);
-      return;
-    }
-    let from: string | null = null;
-    let to: string | null = null;
-    let commit: Commit | null = null;
-    if (picked[0] === WORKING) {
-      to = null;
-    } else {
-      // The list is newest first: the range runs from the oldest's parent to the newest.
-      const chosen = commits.filter((c) => picked.includes(c.hash));
-      if (!chosen.length) return;
-      const newest = chosen[0];
-      const oldest = chosen[chosen.length - 1];
-      to = newest.hash;
-      if (chosen.length > 1) from = oldest.parents[0] ?? EMPTY_TREE;
-      if (chosen.length === 1) commit = newest;
-    }
-    let live = true;
-    setDiffLoading(true);
-    api
-      .diff(root, from, to)
-      .then((d) => {
-        if (!live) return;
-        setDiff({ files: parseDiff(d.patch), cut: d.cut, commit });
-        setDiffError(null);
-      })
-      .catch((e) => live && setDiffError(String(e.message ?? e)))
-      .finally(() => live && setDiffLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [root, pickedKey, picked[0] === WORKING ? gitKey : ""]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Show the newest change at first.
-  useEffect(() => {
-    if (picked.length || mode !== "changes") return;
-    if (uncommitted > 0) setPicked([WORKING]);
-    else if (commits[0]) setPicked([commits[0].hash]);
-  }, [mode, commits, uncommitted, picked.length]);
 
   const openFile = (path: string, line: number | null, at: string | null = rev) => {
     setMode("files");
@@ -265,35 +185,6 @@ export function Workbench() {
       .catch((e) => setFind((cur) => (cur ? { ...cur, error: String(e.message ?? e) } : cur)));
   };
 
-  const diffRev = picked[0] === WORKING || !picked.length ? null : picked[0];
-
-  const togglePick = (hash: string, shift: boolean) => {
-    if (hash === WORKING || !shift || !anchor || anchor === WORKING) {
-      setPicked([hash]);
-      setAnchor(hash);
-      return;
-    }
-    const a = commits.findIndex((c) => c.hash === anchor);
-    const b = commits.findIndex((c) => c.hash === hash);
-    if (a < 0 || b < 0) return;
-    const [lo, hi] = a < b ? [a, b] : [b, a];
-    setPicked(commits.slice(lo, hi + 1).map((c) => c.hash));
-  };
-
-  const markReviewed = (hashes: string[], on: boolean) => {
-    api
-      .reviewed(root, hashes, on)
-      .then(() => setCommits((cs) => cs.map((c) => (hashes.includes(c.hash) ? { ...c, reviewed: on } : c))))
-      .catch((e) => store.toast(String(e.message ?? e), true));
-  };
-
-  const nextUnreviewed = () => {
-    // Oldest first, like reading a branch's story.
-    const next = [...commits].reverse().find((c) => !c.reviewed);
-    if (next) togglePick(next.hash, false);
-    else store.toast("Every commit shown is reviewed.");
-  };
-
   return (
     <div className="workbench">
       <div className="wbbar">
@@ -301,29 +192,22 @@ export function Workbench() {
           <button className={mode === "files" ? "on" : ""} onClick={() => setMode("files")}>
             <Icon id="files" /> Files
           </button>
-          <button className={mode === "changes" ? "on" : ""} onClick={() => setMode("changes")}>
-            <Icon id="source-control" /> Changes
-            {uncommitted > 0 && <span className="count">{uncommitted}</span>}
+          <button
+            className={mode === "review" ? "on" : ""}
+            onClick={() => setMode("review")}
+            title="Review what this branch changed, file by file, and send your comments to the agent"
+          >
+            <Icon id="source-control" /> Code review
           </button>
         </div>
         <ProjectPicker />
-        {mode === "files" ? (
+        {mode === "files" && (
           <RevPicker
             branches={branches}
             value={rev}
             onChange={(r) => {
               setRev(r);
               setTabs((ts) => ts.map((t) => ({ ...t, rev: r })));
-            }}
-            working
-          />
-        ) : (
-          <RevPicker
-            branches={branches}
-            value={logRev}
-            onChange={(r) => {
-              setLogRev(r);
-              setPicked([]);
             }}
           />
         )}
@@ -340,155 +224,109 @@ export function Workbench() {
           <p>codeit started in a folder of projects. Pick the one to work on: the agent moves there too.</p>
           <ProjectPicker compact />
         </div>
+      ) : mode === "review" ? (
+        <div className="wbbody">
+          <Review
+            root={root}
+            gitKey={gitKey}
+            onOpen={(path, line, at) => openFile(path, line, at)}
+            onFind={(w, x, y, jump, at) => lookUp(w, x, y, jump, at, null)}
+            onAsk={ask}
+            reference={reference}
+          />
+        </div>
       ) : (
         <div className="wbbody">
           <aside className="wbside">
-            {mode === "files" ? (
-              <>
-                <div className="wbsearch">
-                  <input
-                    placeholder="Go to file…"
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") setFilter("");
-                    }}
-                  />
-                  <button className="iconbtn small" title="Refresh" onClick={loadTree}>
-                    <Icon id="refresh" size={14} />
-                  </button>
-                  <button className="iconbtn small" title="Collapse folders" onClick={() => setExpanded(new Set())}>
-                    <Icon id="collapse-all" size={14} />
-                  </button>
-                </div>
-                {treeError && <div className="muted pad small">{treeError}</div>}
-                {filter ? (
-                  <QuickOpen files={files} filter={filter} onOpen={(p) => openFile(p, null)} />
-                ) : (
-                  <Explorer
-                    files={files}
-                    status={rev ? {} : status}
-                    expanded={expanded}
-                    setExpanded={setExpanded}
-                    selected={tab?.path ?? null}
-                    onOpen={(p) => openFile(p, null)}
-                  />
-                )}
-              </>
-            ) : (
-              <Commits
-                commits={commits}
-                more={more}
-                uncommitted={uncommitted}
-                picked={picked}
-                onPick={togglePick}
-                onMore={() => loadLog(commits.length)}
-                onReviewed={markReviewed}
-                onNext={nextUnreviewed}
-                changed={diff?.files ?? []}
-                onJump={(p) => {
-                  setScrollTo(null);
-                  setTimeout(() => setScrollTo(p));
+            <div className="wbsearch">
+              <input
+                placeholder="Go to file…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setFilter("");
                 }}
+              />
+              <button className="iconbtn small" title="Refresh" onClick={loadTree}>
+                <Icon id="refresh" size={14} />
+              </button>
+              <button className="iconbtn small" title="Collapse folders" onClick={() => setExpanded(new Set())}>
+                <Icon id="collapse-all" size={14} />
+              </button>
+            </div>
+            {treeError && <div className="muted pad small">{treeError}</div>}
+            {filter ? (
+              <QuickOpen files={files} filter={filter} onOpen={(p) => openFile(p, null)} />
+            ) : (
+              <Explorer
+                files={files}
+                status={rev ? {} : status}
+                expanded={expanded}
+                setExpanded={setExpanded}
+                selected={tab?.path ?? null}
+                onOpen={(p) => openFile(p, null)}
               />
             )}
           </aside>
 
           <section className="wbmain">
-            {mode === "files" ? (
-              <>
-                {tabs.length > 0 && (
-                  <div className="tabs">
-                    {tabs.map((t, i) => (
-                      <div
-                        key={`${t.rev}:${t.path}`}
-                        className={`tab${i === active ? " on" : ""}`}
-                        onClick={() => setActive(i)}
-                        onAuxClick={(e) => e.button === 1 && closeTab(i)}
-                        title={t.path}
-                      >
-                        <FileIcon path={t.path} />
-                        <span>{t.path.split("/").pop()}</span>
-                        {t.rev && <span className="tabrev">{short(t.rev)}</span>}
-                        <button
-                          className="tabx"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            closeTab(i);
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {tab && (
-                  <div className="crumbs">
-                    {tab.path.split("/").map((p, i, all) => (
-                      <span key={i} className="crumb">
-                        {i === all.length - 1 ? <FileIcon path={tab.path} /> : null}
-                        {p}
-                        {i < all.length - 1 && <Icon id="chevron-right" size={12} />}
-                      </span>
-                    ))}
-                    <span className="spacer" />
-                    <button className="btn small" onClick={() => ask(reference(tab.path, null, tab.rev))}>
-                      Reference the file
+            {tabs.length > 0 && (
+              <div className="tabs">
+                {tabs.map((t, i) => (
+                  <div
+                    key={`${t.rev}:${t.path}`}
+                    className={`tab${i === active ? " on" : ""}`}
+                    onClick={() => setActive(i)}
+                    onAuxClick={(e) => e.button === 1 && closeTab(i)}
+                    title={t.path}
+                  >
+                    <FileIcon path={t.path} />
+                    <span>{t.path.split("/").pop()}</span>
+                    {t.rev && <span className="tabrev">{short(t.rev)}</span>}
+                    <button
+                      className="tabx"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(i);
+                      }}
+                    >
+                      ✕
                     </button>
                   </div>
-                )}
-                {!tab && <Welcome files={files} onOpen={(p) => openFile(p, null)} />}
-                {tab && fileError && <div className="muted pad">{fileError}</div>}
-                {tab && content && content.path === tab.path && !fileError && (
-                  content.text === null ? (
-                    <div className="muted pad">
-                      {content.too_big ? "This file is too large to show." : "Binary file."}
-                    </div>
-                  ) : (
-                    <CodeView
-                      text={content.text}
-                      lang={languageOf(tab.path)}
-                      reveal={reveal}
-                      onAsk={(s) => ask(reference(tab.path, s, tab.rev))}
-                      onFind={(w, x, y, jump) => lookUp(w, x, y, jump, tab.rev, tab.path)}
-                    />
-                  )
-                )}
-              </>
-            ) : (
-              <div className="diffpane">
-                {diffError && <div className="muted pad">{diffError}</div>}
-                {picked.length > 0 && (
-                  <CommitHead
-                    picked={picked}
-                    commits={commits}
-                    diff={diff}
-                    loading={diffLoading}
-                    onReviewed={markReviewed}
-                    onAsk={ask}
-                    onBrowse={(h) => {
-                      const p = diff?.files.find((f) => f.status !== "deleted")?.path;
-                      if (p) openFile(p, null, h);
-                      else {
-                        setMode("files");
-                        setRev(h);
-                      }
-                    }}
-                  />
-                )}
-                {diff && (
-                  <DiffView
-                    files={diff.files}
-                    scrollTo={scrollTo}
-                    onAsk={(path, s) => ask(reference(path, s, diffRev))}
-                    onOpen={(path, line) => openFile(path, line, diffRev)}
-                    onFind={(w, x, y, jump) => lookUp(w, x, y, jump, diffRev, null)}
-                  />
-                )}
-                {diff?.cut && <div className="muted pad">The diff is too large; it was cut here.</div>}
-                {!picked.length && <div className="muted pad">No commits yet.</div>}
+                ))}
               </div>
+            )}
+            {tab && (
+              <div className="crumbs">
+                {tab.path.split("/").map((p, i, all) => (
+                  <span key={i} className="crumb">
+                    {i === all.length - 1 ? <FileIcon path={tab.path} /> : null}
+                    {p}
+                    {i < all.length - 1 && <Icon id="chevron-right" size={12} />}
+                  </span>
+                ))}
+                <span className="spacer" />
+                <button className="btn small" onClick={() => ask(reference(tab.path, null, tab.rev))}>
+                  Reference the file
+                </button>
+              </div>
+            )}
+            {!tab && <Welcome files={files} onOpen={(p) => openFile(p, null)} />}
+            {tab && fileError && <div className="muted pad">{fileError}</div>}
+            {tab && content && content.path === tab.path && !fileError && (
+              content.text === null ? (
+                <div className="muted pad">
+                  {content.too_big ? "This file is too large to show." : "Binary file."}
+                </div>
+              ) : (
+                <CodeView
+                  text={content.text}
+                  lang={languageOf(tab.path)}
+                  reveal={reveal}
+                  onAsk={(s) => ask(reference(tab.path, s, tab.rev))}
+                  onFind={(w, x, y, jump) => lookUp(w, x, y, jump, tab.rev, tab.path)}
+                />
+              )
             )}
           </section>
         </div>
@@ -634,217 +472,27 @@ function QuickOpen({ files, filter, onOpen }: { files: string[]; filter: string;
   );
 }
 
-function Commits({
-  commits,
-  more,
-  uncommitted,
-  picked,
-  onPick,
-  onMore,
-  onReviewed,
-  onNext,
-  changed,
-  onJump,
-}: {
-  commits: Commit[];
-  more: boolean;
-  uncommitted: number;
-  picked: string[];
-  onPick: (hash: string, shift: boolean) => void;
-  onMore: () => void;
-  onReviewed: (hashes: string[], on: boolean) => void;
-  onNext: () => void;
-  changed: DiffFile[];
-  onJump: (path: string) => void;
-}) {
-  const unreviewed = commits.filter((c) => !c.reviewed).length;
-  return (
-    <div className="commits">
-      <div className="wbsearch">
-        <span className="muted small">
-          {unreviewed ? `${unreviewed} not reviewed` : "All reviewed"}
-          {more ? " (of those shown)" : ""}
-        </span>
-        <span className="spacer" />
-        {unreviewed > 0 && (
-          <button className="btn small" onClick={onNext} title="The oldest commit not reviewed yet">
-            Next to review
-          </button>
-        )}
-      </div>
-      <div className="clist">
-        {uncommitted > 0 && (
-          <div className={`crow working${picked[0] === WORKING ? " on" : ""}`} onClick={() => onPick(WORKING, false)}>
-            <span className="cmark">
-              <Icon id="circle-large-outline" size={14} />
-            </span>
-            <div className="cbody">
-              <div className="csubject">Uncommitted changes</div>
-              <div className="cmeta">{uncommitted} files</div>
-            </div>
-          </div>
-        )}
-        {commits.map((c) => (
-          <div
-            key={c.hash}
-            className={`crow${picked.includes(c.hash) ? " on" : ""}${c.reviewed ? " done" : ""}`}
-            onClick={(e) => onPick(c.hash, e.shiftKey)}
-            title={`${c.subject}\n\n${c.author} · ${new Date(c.date * 1000).toLocaleString()}\nShift-click picks a range.`}
-          >
-            <button
-              className="cmark"
-              title={c.reviewed ? "Reviewed: click to unmark" : "Mark reviewed"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onReviewed([c.hash], !c.reviewed);
-              }}
-            >
-              <Icon id={c.reviewed ? "pass-filled" : "circle-large-outline"} size={14} />
-            </button>
-            <div className="cbody">
-              <div className="csubject">{c.subject}</div>
-              <div className="cmeta">
-                <span className="mono">{short(c.hash)}</span> · {c.author} · {ago(c.date)}
-                {c.refs.map((r) => (
-                  <span key={r} className="cref">
-                    {r.replace(/^HEAD -> /, "")}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        ))}
-        {more && (
-          <button className="link small pad" onClick={onMore}>
-            Older commits
-          </button>
-        )}
-        {!commits.length && !uncommitted && <div className="muted pad small">No commits.</div>}
-      </div>
-      {changed.length > 0 && (
-        <div className="changedlist">
-          <div className="sidetitle">Files changed ({changed.length})</div>
-          {changed.map((f) => (
-            <div key={f.path} className="trow file" style={{ paddingLeft: 10 }} onClick={() => onJump(f.path)} title={f.path}>
-              <FileIcon path={f.path} />
-              <span className="tname">{f.path.split("/").pop()}</span>
-              <span className="muted small ellipsis">{f.path.split("/").slice(0, -1).join("/")}</span>
-              <span className="spacer" />
-              <span className="ok small mono">+{f.added}</span>
-              <span className="bad small mono">−{f.removed}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CommitHead({
-  picked,
-  commits,
-  diff,
-  loading,
-  onReviewed,
-  onAsk,
-  onBrowse,
-}: {
-  picked: string[];
-  commits: Commit[];
-  diff: { files: DiffFile[]; commit: Commit | null } | null;
-  loading: boolean;
-  onReviewed: (hashes: string[], on: boolean) => void;
-  onAsk: (text: string) => void;
-  onBrowse: (hash: string) => void;
-}) {
-  const added = diff?.files.reduce((n, f) => n + f.added, 0) ?? 0;
-  const removed = diff?.files.reduce((n, f) => n + f.removed, 0) ?? 0;
-  const stats = diff && (
-    <span className="small">
-      {diff.files.length} files · <span className="ok">+{added}</span> <span className="bad">−{removed}</span>
-    </span>
-  );
-  if (picked[0] === WORKING) {
-    return (
-      <div className="commithead">
-        <div className="ctitle">Uncommitted changes {loading && <span className="spinner small" />}</div>
-        <div className="cline2">
-          {stats}
-          <span className="spacer" />
-          <button className="btn small" onClick={() => onAsk("the uncommitted changes ")}>
-            Reference in the prompt
-          </button>
-        </div>
-      </div>
-    );
-  }
-  const chosen = commits.filter((c) => picked.includes(c.hash));
-  if (!chosen.length) return null;
-  const all = chosen.every((c) => c.reviewed);
-  const one = chosen.length === 1 ? chosen[0] : null;
-  const text = one
-    ? `commit ${short(one.hash)} ("${one.subject}") `
-    : `commits ${short(chosen[chosen.length - 1].hash)}..${short(chosen[0].hash)} `;
-  return (
-    <div className="commithead">
-      <div className="ctitle">
-        {one ? one.subject : `${chosen.length} commits`} {loading && <span className="spinner small" />}
-      </div>
-      {one?.body && <pre className="cbodytext">{one.body}</pre>}
-      <div className="cline2">
-        {one && (
-          <span className="small muted">
-            <span className="mono">{short(one.hash)}</span> · {one.author} · {new Date(one.date * 1000).toLocaleString()}
-          </span>
-        )}
-        {!one && (
-          <span className="small muted mono">
-            {short(chosen[chosen.length - 1].hash)}..{short(chosen[0].hash)}
-          </span>
-        )}
-        {stats}
-        <span className="spacer" />
-        <button className="btn small" onClick={() => onAsk(text)}>
-          Reference in the prompt
-        </button>
-        {one && (
-          <button className="btn small" onClick={() => onBrowse(one.hash)}>
-            Browse files here
-          </button>
-        )}
-        <button className={`btn small${all ? "" : " primary"}`} onClick={() => onReviewed(chosen.map((c) => c.hash), !all)}>
-          <Icon id={all ? "pass-filled" : "check"} size={14} /> {all ? "Reviewed" : "Mark reviewed"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function RevPicker({
   branches,
   value,
   onChange,
-  working,
 }: {
   branches: { current: string | null; branches: Branch[] };
   value: string | null;
   onChange: (rev: string | null) => void;
-  working?: boolean;
 }) {
   if (!branches.branches.length && !branches.current) return null;
   const local = branches.branches.filter((b) => !b.remote);
   const remote = branches.branches.filter((b) => b.remote);
   const known = value === null || branches.branches.some((b) => b.name === value);
   return (
-    <label className="revpicker" title={working ? "Show the files of" : "Show the commits of"}>
+    <label className="revpicker" title="Show the files of">
       <Icon id="git-branch" size={14} />
       <select value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
-        <option value="">{working ? `Working tree (${branches.current ?? "no branch"})` : `${branches.current ?? "HEAD"} (current)`}</option>
+        <option value="">{`Working tree (${branches.current ?? "no branch"})`}</option>
         {!known && value && <option value={value}>{short(value)}</option>}
         <optgroup label="Branches">
-          {local
-            .filter((b) => working || b.name !== branches.current)
-            .map((b) => (
+          {local.map((b) => (
               <option key={b.name} value={b.name}>
                 {b.name}
                 {b.track ? ` [${b.track}]` : ""} · {ago(b.date)}
