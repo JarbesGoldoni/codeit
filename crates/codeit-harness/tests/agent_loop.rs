@@ -525,3 +525,53 @@ async fn the_model_names_the_session_once() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert_eq!(s.lock().unwrap().title, "Mine");
 }
+
+#[tokio::test]
+async fn moves_between_projects_of_a_workspace() {
+    // A folder of projects: the session picks one, then commands and @mentions start there.
+    let dir = std::env::temp_dir().join(format!("codeit-workspace-{}", uuid::Uuid::new_v4()));
+    for p in ["app", "lib"] {
+        std::fs::create_dir_all(dir.join(p).join(".git")).unwrap();
+        std::fs::write(dir.join(p).join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    }
+    std::fs::write(dir.join("lib/notes.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+    let provider = Scripted::new(vec![
+        vec![("project", json!({}))],
+        vec![("project", json!({"path": "app"}))],
+        vec![("bash", json!({"command": "pwd"}))],
+        vec![("text", json!("In app."))],
+        vec![("text", json!("Read it."))],
+    ]);
+    let (h, s) = setup(&dir, provider.clone()).await;
+    let kinds = turn(&h, &s, Input::Prompt("work on app".into()), Reply::Once).await;
+    assert!(kinds.contains(&"done:project:ok:app (main)".to_string()), "{kinds:?}");
+    assert!(
+        kinds.iter().any(|k| k.starts_with("done:project:ok:Now working in") && k.contains("branch main")),
+        "{kinds:?}"
+    );
+    assert!(kinds.iter().any(|k| k.starts_with("done:bash:ok:") && k.ends_with("/app")), "bash ran in app: {kinds:?}");
+    assert_eq!(s.lock().unwrap().project.as_deref(), Some(dir.join("app").as_path()));
+
+    // The user moves it: the model hears it, and lines of a file come attached.
+    {
+        let mut s = s.lock().unwrap();
+        s.project = Some(dir.join("lib"));
+        s.project_moved = true;
+    }
+    turn(&h, &s, Input::Prompt("look at @notes.txt:2-3".into()), Reply::Once).await;
+    let seen = provider.seen.lock().unwrap();
+    let last = seen.last().unwrap().messages.last().unwrap();
+    let text: Vec<&str> = last
+        .parts
+        .iter()
+        .filter_map(|p| if let Part::Text { text } = p { Some(text.as_str()) } else { None })
+        .collect();
+    assert!(text.iter().any(|t| t.contains("moved this session to") && t.contains("lib")), "{text:?}");
+    let file = text.iter().find(|t| t.starts_with("<file path=\"notes.txt\" lines=\"2-3\">")).expect("lines attached");
+    assert!(
+        file.contains("two") && file.contains("three") && !file.contains("one") && !file.contains("four"),
+        "{file}"
+    );
+    assert!(seen[0].tools.iter().any(|t| t.name == "project"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

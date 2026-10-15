@@ -8,7 +8,7 @@ use include_dir::{Dir, include_dir};
 
 static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/web-dist");
 
-fn content_type(path: &str) -> &'static str {
+pub fn content_type(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or_default() {
         "html" => "text/html; charset=utf-8",
         "js" => "text/javascript; charset=utf-8",

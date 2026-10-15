@@ -8,6 +8,7 @@
 
 mod assets;
 mod bridge;
+mod code;
 mod panel;
 mod timeline;
 mod voice;
@@ -101,7 +102,9 @@ pub struct Server {
     next: AtomicU64,
     models: Mutex<BTreeMap<&'static str, Result<Vec<ModelInfo>, String>>>,
     status: Mutex<(Option<Instant>, Value)>,
-    git: Mutex<Value>,
+    /// Branch and changes of each folder shown: where codeit started (`""`) and the sessions'
+    /// projects, by their path relative to it.
+    gits: Mutex<BTreeMap<String, Value>>,
     bridge: bridge::Bridge,
     voice: Arc<voice::Voice>,
 }
@@ -184,6 +187,11 @@ enum In {
     BridgeRefresh {
         site: String,
     },
+    /// Move a session to a project (a folder relative to where codeit started; `""` for it).
+    Project {
+        session: String,
+        path: String,
+    },
     BridgeReload,
 }
 
@@ -230,6 +238,8 @@ pub async fn run(args: &[&str]) -> Result<()> {
         .route("/api/bridge", get(ws_bridge))
         .route("/api/voice", post(transcribe))
         .route("/api/image", post(upload_image))
+        .route("/api/code", post(code::api))
+        .route("/skin/{*path}", get(skin_file))
         .fallback(assets::serve)
         .layer(middleware::from_fn_with_state(server.clone(), guard))
         .with_state(server.clone());
@@ -311,6 +321,20 @@ async fn transcribe(AxState(s): AxState<Arc<Server>>, body: Bytes) -> Response {
     }
 }
 
+/// The plugin's theme files (`crate::skin`).
+async fn skin_file(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    let Some(skin) = crate::skin() else { return StatusCode::NOT_FOUND.into_response() };
+    let body: Option<&'static [u8]> = match path.as_str() {
+        "theme.json" => skin.theme.map(str::as_bytes),
+        "icons.json" => skin.icons.map(str::as_bytes),
+        "product-icons.json" => skin.product_icons.map(str::as_bytes),
+        p => (skin.file)(p),
+    };
+    let Some(body) = body else { return StatusCode::NOT_FOUND.into_response() };
+    let kind = assets::content_type(&path);
+    ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, "no-cache")], body).into_response()
+}
+
 /// A pasted or dropped image: saved under the cache, and its path given back for an `@path`.
 async fn upload_image(headers: HeaderMap, body: Bytes) -> Response {
     let ext = match headers.get(header::CONTENT_TYPE).and_then(|h| h.to_str().ok()).unwrap_or_default() {
@@ -353,7 +377,7 @@ impl Server {
             next: AtomicU64::new(1),
             models: Mutex::default(),
             status: Mutex::new((None, json!([]))),
-            git: Mutex::new(Value::Null),
+            gits: Mutex::default(),
             bridge: bridge::Bridge::default(),
             voice: Arc::new(voice),
         })
@@ -427,7 +451,14 @@ impl Server {
                 saved.voice_language.as_deref().unwrap_or("auto"),
             ),
             "status": self.status.lock().unwrap().1,
-            "git": *self.git.lock().unwrap(),
+            "gits": *self.gits.lock().unwrap(),
+            "workspace": codeit_harness::project::is_workspace(h),
+            "skin": crate::skin().map(|s| json!({
+                "name": s.name,
+                "theme": s.theme.is_some(),
+                "icons": s.icons.is_some(),
+                "product_icons": s.product_icons.is_some(),
+            })),
             "bridge": self.bridge.describe(),
             "problems": h.problems,
             "sessions": self.sessions(),
@@ -588,6 +619,25 @@ impl Server {
                 });
             }
             In::BridgeRefresh { site } => self.bridge.refresh(&site, true),
+            In::Project { session, path } => {
+                let dir = match self.project_dir(&path) {
+                    Ok(d) => d,
+                    Err(e) => return reply(json!({"type": "toast", "text": format!("{e:#}"), "error": true})),
+                };
+                let cwd = self.harness.cwd.clone();
+                self.with_live(&session, |l, _| {
+                    let mut s = l.session.lock().unwrap();
+                    let project = (dir != cwd).then(|| dir.clone());
+                    if s.project != project {
+                        s.project = project;
+                        s.project_moved = true;
+                        if !s.entries.is_empty() {
+                            let _ = s.save();
+                        }
+                    }
+                });
+                self.moved(&session, &dir);
+            }
             In::BridgeReload => self.load_sites(),
         }
     }
@@ -747,6 +797,7 @@ impl Server {
                 "queue": l.queue,
                 "asks": asks,
                 "todos": s.todos,
+                "project": me.project_rel(&s.workdir()),
                 "context": l.context,
                 "settings": me.settings_of(&s),
             })
@@ -825,6 +876,18 @@ impl Server {
         if let Some(Some(m)) = msg {
             self.broadcast(m);
         }
+    }
+
+    /// Tells the tabs a session works in another folder, and looks at that folder's git now.
+    fn moved(self: &Arc<Self>, id: &str, dir: &std::path::Path) {
+        let rel = self.project_rel(dir);
+        self.broadcast(json!({"type": "project", "session": id, "project": rel}));
+        let (me, dir) = (self.clone(), dir.to_path_buf());
+        tokio::spawn(async move {
+            let v = tokio::task::spawn_blocking(move || git_state(&dir)).await.unwrap_or(Value::Null);
+            me.gits.lock().unwrap().insert(rel.clone(), v.clone());
+            me.broadcast(json!({"type": "git", "path": rel, "git": v}));
+        });
     }
 
     fn notice(&self, id: &str, text: impl Into<String>, error: bool) {
@@ -966,6 +1029,7 @@ impl Server {
                 self.broadcast(json!({"type": "sessions", "sessions": self.sessions()}));
             }
             Event::Todos(todos) => self.broadcast(json!({"type": "todos", "session": id, "todos": todos})),
+            Event::Project(dir) => self.moved(id, &dir),
             Event::Title(title) => {
                 self.broadcast(json!({"type": "title", "session": id, "title": title}));
                 self.broadcast(json!({"type": "sessions", "sessions": self.sessions()}));
@@ -1384,21 +1448,24 @@ impl Server {
         });
     }
 
-    /// The branch and how many files changed, every few seconds; sent when it changes.
+    /// The branch and how many files changed, every few seconds, for where codeit started and
+    /// each open session's project; sent when it changes.
     fn watch_git(self: &Arc<Self>) {
         let me = self.clone();
         tokio::spawn(async move {
             loop {
-                let cwd = me.harness.cwd.clone();
-                let v = tokio::task::spawn_blocking(move || git_state(&cwd)).await.unwrap_or(Value::Null);
-                let changed = {
-                    let mut g = me.git.lock().unwrap();
-                    let changed = *g != v;
-                    *g = v.clone();
-                    changed
-                };
-                if changed {
-                    me.broadcast(json!({"type": "git", "git": v}));
+                let mut dirs: BTreeMap<String, std::path::PathBuf> = BTreeMap::new();
+                dirs.insert(String::new(), me.harness.cwd.clone());
+                for l in me.lives.lock().unwrap().values() {
+                    let dir = l.session.lock().unwrap().workdir();
+                    dirs.insert(me.project_rel(&dir), dir);
+                }
+                for (rel, dir) in dirs {
+                    let v = tokio::task::spawn_blocking(move || git_state(&dir)).await.unwrap_or(Value::Null);
+                    let changed = me.gits.lock().unwrap().insert(rel.clone(), v.clone()).as_ref() != Some(&v);
+                    if changed {
+                        me.broadcast(json!({"type": "git", "path": rel, "git": v}));
+                    }
                 }
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }

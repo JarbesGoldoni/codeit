@@ -19,6 +19,7 @@ import type {
   ServerMessage,
   SessionMeta,
   Settings,
+  SkinInfo,
   Todo,
   Voice,
 } from "./protocol";
@@ -34,6 +35,7 @@ export interface SessionView {
   queue: string[];
   asks: { id: number; ask: AskView }[];
   todos: Todo[];
+  project: string;
   context: [number, number] | null;
   settings: Settings;
 }
@@ -81,7 +83,11 @@ export interface State {
   models: Models;
   defaults: { model: string | null; effort: string | null; approval: "auto" | "ask" };
   status: PluginStatus[];
-  git: Git | null;
+  gits: Record<string, Git | null>;
+  workspace: boolean;
+  skin: SkinInfo | null;
+  /** The conversation, or the code viewer next to it. */
+  view: "chat" | "code";
   voice: Voice | null;
   /** The speech-to-text engine this browser picked (null: Whisper when codeit has it). */
   speech: Engine | null;
@@ -107,7 +113,10 @@ const initial: State = {
   models: { list: [], loading: 0, failed: [] },
   defaults: { model: null, effort: null, approval: "auto" },
   status: [],
-  git: null,
+  gits: {},
+  workspace: false,
+  skin: null,
+  view: savedView(),
   voice: null,
   speech: savedSpeech(),
   bridge: { browsers: [], sites: [] },
@@ -118,6 +127,19 @@ const initial: State = {
   toasts: [],
   login: { providers: null, started: null, done: null },
 };
+
+function savedView(): "chat" | "code" {
+  try {
+    return localStorage.getItem("codeit.view") === "code" ? "code" : "chat";
+  } catch {
+    return "chat";
+  }
+}
+
+/** The git state of the folder the session works in. */
+export function gitOf(s: State): Git | null {
+  return s.gits[s.session?.project ?? ""] ?? null;
+}
 
 function savedSpeech(): Engine | null {
   try {
@@ -247,6 +269,20 @@ class Store {
     this.set({ speech });
   }
 
+  setView(view: "chat" | "code") {
+    try {
+      localStorage.setItem("codeit.view", view);
+    } catch {
+      // Remembered for this tab only.
+    }
+    this.set({ view });
+  }
+
+  setProject(path: string) {
+    const s = this.state.session;
+    if (s) this.send({ type: "project", session: s.id, path });
+  }
+
   setOverlay(overlay: Overlay) {
     if (overlay?.kind === "login") {
       this.set({ login: { providers: null, started: null, done: null } });
@@ -299,7 +335,9 @@ class Store {
           defaults: m.settings,
           voice: m.voice,
           status: m.status,
-          git: m.git,
+          gits: m.gits,
+          workspace: m.workspace,
+          skin: m.skin,
           bridge: m.bridge,
           sessions: m.sessions,
         });
@@ -320,6 +358,7 @@ class Store {
             queue: m.queue,
             asks: m.asks,
             todos: m.todos,
+            project: m.project,
             context: m.context,
             settings: m.settings,
           },
@@ -374,7 +413,10 @@ class Store {
         this.set({ status: m.status });
         break;
       case "git":
-        this.set({ git: m.git });
+        this.set({ gits: { ...this.state.gits, [m.path]: m.git } });
+        break;
+      case "project":
+        if (mine(m.session)) this.setSession({ project: m.project });
         break;
       case "voice":
         this.set({ voice: m.voice });

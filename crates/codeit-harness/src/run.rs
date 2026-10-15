@@ -81,8 +81,14 @@ impl Run {
         self.emit(Event::Done);
     }
 
+    /// Where this session's commands run: its project, else the folder codeit started in.
+    fn workdir(&self) -> std::path::PathBuf {
+        self.session.lock().unwrap().workdir()
+    }
+
     async fn snapshot(&self) -> Option<String> {
-        let root = self.harness.root.clone();
+        let dir = self.workdir();
+        let root = util::git_root(&dir).unwrap_or(dir);
         tokio::task::spawn_blocking(move || crate::snapshot::track(&root)).await.ok().flatten()
     }
 
@@ -121,7 +127,7 @@ impl Run {
                     .find(|c| c.name == name)
                     .ok_or_else(|| anyhow!("unknown command /{name}"))?;
                 let text =
-                    crate::command::run_shell(&crate::command::render(&cmd.template, &args), &self.harness.cwd).await;
+                    crate::command::run_shell(&crate::command::render(&cmd.template, &args), &self.workdir()).await;
                 let typed = format!("/{name} {args}").trim_end().to_string();
                 if let Some(a) = cmd.agent.as_deref().and_then(|a| self.harness.agent(a))
                     && a.primary()
@@ -160,8 +166,19 @@ impl Run {
     /// Adds the user's message, with the files it mentions attached.
     async fn add_prompt(&self, typed: &str, text: &str, key: &str) {
         let mut parts = vec![Part::Text { text: text.to_string() }];
-        for path in mentions(text, &self.harness.cwd) {
-            let shown = util::display(&self.harness.cwd, &path);
+        let workdir = self.workdir();
+        for (path, lines) in mentions(text, &workdir) {
+            let shown = util::display(&workdir, &path);
+            if let Some((from, to)) = lines {
+                let body = match crate::tools::read_for_model(&path, from, to + 1 - from) {
+                    Ok(t) => t,
+                    Err(e) => format!("({e})"),
+                };
+                parts.push(Part::Text {
+                    text: format!("<file path=\"{shown}\" lines=\"{from}-{to}\">\n{body}\n</file>"),
+                });
+                continue;
+            }
             if path.is_file() && crate::tools::image_type(&path).is_some() {
                 match crate::tools::read_image(&path) {
                     Ok((media_type, data)) => {
@@ -196,6 +213,10 @@ impl Run {
             let mut s = self.session.lock().unwrap();
             if std::mem::take(&mut s.todos_cleared) {
                 parts.push(Part::Text { text: prompt::TODO_CLEARED.to_string() });
+            }
+            if std::mem::take(&mut s.project_moved) {
+                let dir = s.workdir();
+                parts.push(Part::Text { text: crate::project::moved(&dir) });
             }
             let mut entry = Entry::new(Message { role: Role::User, parts, model: None });
             entry.prompt = Some(typed.to_string());
@@ -633,7 +654,8 @@ impl Run {
             },
             _ => json!({}),
         };
-        let title = tool.title(&input, &self.harness.cwd);
+        let workdir = self.workdir();
+        let title = tool.title(&input, &workdir);
         self.emit(Event::ToolStart {
             id: call.id.clone(),
             name: call.name.clone(),
@@ -643,6 +665,7 @@ impl Run {
 
         let ctx = Ctx {
             harness: self.harness.clone(),
+            cwd: workdir,
             session: self.session.clone(),
             agent: agent.clone(),
             rules: rules.clone(),
@@ -786,8 +809,9 @@ fn without_images(messages: &mut [Message], model: &str) {
     }
 }
 
-/// `@path` mentions of existing files or folders.
-fn mentions(text: &str, cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
+/// `@path` mentions of existing files or folders, and `@path:12` or `@path:12-30` for lines of a
+/// file (first and last, from 1).
+fn mentions(text: &str, cwd: &std::path::Path) -> Vec<(std::path::PathBuf, Option<(usize, usize)>)> {
     let mut out = Vec::new();
     for word in text.split_whitespace() {
         let Some(p) = word.strip_prefix('@') else { continue };
@@ -796,11 +820,29 @@ fn mentions(text: &str, cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
             continue;
         }
         let path = util::resolve(cwd, p);
-        if path.exists() && !out.contains(&path) {
-            out.push(path);
+        let found = if path.exists() {
+            Some((path, None))
+        } else {
+            line_range(p).and_then(|(file, range)| {
+                let path = util::resolve(cwd, file);
+                path.is_file().then_some((path, Some(range)))
+            })
+        };
+        if let Some(m) = found
+            && !out.contains(&m)
+        {
+            out.push(m);
         }
     }
     out
+}
+
+/// `file:12` or `file:12-30` → (file, (12, 30)).
+fn line_range(p: &str) -> Option<(&str, (usize, usize))> {
+    let (file, lines) = p.rsplit_once(':')?;
+    let (a, b) = lines.split_once('-').unwrap_or((lines, lines));
+    let (a, b): (usize, usize) = (a.parse().ok()?, b.parse().ok()?);
+    (a >= 1 && b >= a && !file.is_empty()).then_some((file, (a, b)))
 }
 
 /// Errors worth retrying: network trouble, rate limits, overloaded servers.
@@ -871,7 +913,11 @@ mod tests {
         let d = std::env::temp_dir().join(format!("codeit-mention-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("a.rs"), "x").unwrap();
-        assert_eq!(mentions("look at @a.rs, and @missing.rs", &d), vec![d.join("a.rs")]);
+        assert_eq!(mentions("look at @a.rs, and @missing.rs", &d), vec![(d.join("a.rs"), None)]);
+        assert_eq!(
+            mentions("@a.rs:3-9 and @a.rs:4, not @a.rs:9-3 or @missing.rs:1", &d),
+            vec![(d.join("a.rs"), Some((3, 9))), (d.join("a.rs"), Some((4, 4)))]
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 }

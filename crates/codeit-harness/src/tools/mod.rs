@@ -87,6 +87,8 @@ impl std::error::Error for Refused {}
 /// Everything a tool call can use.
 pub struct Ctx {
     pub harness: Arc<Harness>,
+    /// The session's working folder: its project, else where codeit started.
+    pub cwd: PathBuf,
     pub session: Arc<Mutex<Session>>,
     pub agent: Agent,
     /// The agent's effective rules (defaults, config, agent, approval preset).
@@ -102,7 +104,7 @@ pub struct Ctx {
 
 impl Ctx {
     pub fn cwd(&self) -> &Path {
-        &self.harness.cwd
+        &self.cwd
     }
 
     pub fn resolve(&self, path: &str) -> PathBuf {

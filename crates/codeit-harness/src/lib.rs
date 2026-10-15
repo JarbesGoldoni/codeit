@@ -23,6 +23,7 @@ pub mod lsp;
 pub mod mcp;
 pub mod mcp_oauth;
 pub mod permission;
+pub mod project;
 mod prompt;
 pub mod review;
 mod run;
@@ -272,6 +273,9 @@ impl Harness {
         all.extend(self.mcp.tools());
         if self.review().is_some() {
             all.push(Arc::new(review::ReviewComment));
+        }
+        if depth == 0 && project::is_workspace(self) {
+            all.push(Arc::new(project::ProjectTool));
         }
         all.retain(|t| {
             !rules.disabled(t.permission())

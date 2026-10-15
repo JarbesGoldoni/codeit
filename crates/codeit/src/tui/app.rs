@@ -1824,7 +1824,7 @@ impl App {
                 self.close_text();
                 self.error(e);
             }
-            HEvent::Title(_) => {}
+            HEvent::Title(_) | HEvent::Project(_) => {}
             HEvent::Done => self.turn_done(),
         }
     }

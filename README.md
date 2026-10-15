@@ -153,11 +153,25 @@ In a permission prompt: `y` yes, `a` always (for the rest of the session), `n` n
 - **Questions and permissions** show above the message box: `y` yes, `a` always in this session, `n` no (and say what to do instead).
 - **The sidebar** lists this folder's sessions (working ones spin, ones waiting for you say so) and each plugin with its commands. The side panel shows the context, the branch, the todo list, the plugins' status and the browser logins.
 - **Plugin panels** (`/tog-…`-style commands) open as dialogs, with their rows, keys and inputs, marked with the plugin's name.
-- **Keys:** Ctrl/⌘+K sessions, Ctrl/⌘+Shift+M models, Ctrl/⌘+Shift+O new session, Ctrl+Shift+Space talk.
+- **Keys:** Ctrl/⌘+K sessions, Ctrl/⌘+Shift+M models, Ctrl/⌘+Shift+O new session, Ctrl/⌘+Shift+E the code viewer, Ctrl+Shift+Space talk.
 
 Sessions keep running on the server: reload the page, or open it in a second tab, and you see the same thing, questions included. Closing the tab doesn't stop a turn; stopping the server does.
 
 The server only answers on `localhost`, and only to its own page and to codeit's browser extension (it checks the `Host` and `Origin` headers), since whoever can talk to it can run commands. On WSL, open the address in your Windows browser: WSL forwards `localhost`.
+
+### Code viewer
+
+The `</>` button at the top (or Ctrl/⌘+Shift+E) opens the project's code next to the conversation, read-only, to see what the agent did:
+
+- **Files:** the folder tree (files changed since the last commit in color, `M`/`U`/`D`), tabs, highlighted code ([Shiki](https://shiki.style), VS Code's grammars), and **Go to file**. The branch menu shows the files of another branch instead of the working tree. Click a name in the code to see where it is defined and used; Ctrl/⌘-click jumps to the definition (found with `git grep`, so it works in any language, roughly).
+- **Changes:** the commits, newest first, like a pull request's pages: pick one to see its diff file by file, shift-click another to see a range together, or pick **Uncommitted changes**. Mark commits reviewed (the circle, or **Mark reviewed**); **Next to review** goes to the oldest one you haven't. The marks are kept per repository in `~/.local/share/codeit/reviewed.json`. The branch menu shows another branch's commits.
+- **Reference lines in the prompt:** click a line number, shift-click or drag for more, then **Reference in the prompt**: the message box gets `@path:12-18`, and codeit attaches those lines when you send. From an older commit, it gets the path, lines and commit instead. A commit or a whole file can be referenced too.
+
+It follows the working tree as the agent works: what changed shows up within seconds.
+
+### Projects
+
+Start codeit in a folder that holds several repositories (`~/workspace`, say) and each session works in one of them. The agent picks it with its `project` tool when you tell it what to work on, or you pick it in the menu at the top. From then on its commands run there and relative paths start there, the header shows the project and its branch, and the code viewer shows that project. When you move a session, the agent is told with your next message. In a single repository, none of this shows up.
 
 ### Voice
 
@@ -282,11 +296,13 @@ Rules are the same as opencode's: a permission (a tool name, or `edit` for every
 
 ### Plugins
 
-Plugins live in their own repos and build their own binary: a Rust crate that depends on codeit's crates (by git) and calls `codeit::main(codeit::Plugins { providers, extensions })` from its `main`. That binary is codeit plus the plugin, with the same config, logins and sessions. A plugin provider implements `codeit_providers::Provider`; when it logs in with its own tool, `/login` shows what its status says to do. For example, a plugin can add a provider that uses another tool's login.
+Plugins live in their own repos and build their own binary: a Rust crate that depends on codeit's crates (by git) and calls `codeit::main(codeit::Plugins { providers, extensions, skin })` from its `main`. That binary is codeit plus the plugin, with the same config, logins and sessions. A plugin provider implements `codeit_providers::Provider`; when it logs in with its own tool, `/login` shows what its status says to do. For example, a plugin can add a provider that uses another tool's login.
 
 An extension is a Rust value implementing `codeit_harness::extension::Extension`. It can change the config at startup (add skill folders, instruction files, commands, MCP servers), add to the system prompt, set environment variables for every bash command, and add tools, like opencode plugins' `config`, `experimental.chat.system.transform` and `shell.env` hooks.
 
 It can show a few words in the footer (a quota, say), refreshed at start, every 5 minutes and after a turn. It can also add slash commands that open a **panel**. The extension answers each action (opened, Enter on a row, one of its keys, text typed, a poll) with a reply: a panel (titled sections of rows, each with a tone, an optional bar and detail lines, plus the keys it handles), a request for a line of text (optionally masked), a prompt to send (optionally in a task's own session), or a notice. The interface draws it; the extension never touches the UI, so the same panel works in the TUI and in the web app.
+
+A plugin binary can also give the web app a **skin** (`codeit::skin::Skin`): a VS Code color theme, file icon theme and product icon theme, in VS Code's own JSON, with the files they point to. The colors then apply to the whole app and to the code, and the icons to the file tree and buttons; the code viewer has a button to go back to codeit's colors.
 
 It can also ask for **cookies from the browser** (`sites`: a page of the site, the cookie names, how often to keep it alive) and get them through `cookies` whenever they change, answering whether the login works (see Browser extension). `crates/codeit/examples/site_cookies.rs` is a small example.
 
@@ -391,6 +407,7 @@ crates/
     src/protocols.rs   the three API shapes: /chat/completions, /responses, /v1/messages
   codeit-harness/      the agent: loop, tools, permissions, sessions, context, MCP, extension API
     src/tools/         read, write, edit, apply_patch, bash, grep, glob, todo, task, skill, webfetch, question
+    src/project.rs     the projects of a workspace folder, and the `project` tool
     src/prompts/       the system prompt and the other prompts, as Markdown
   codeit/              the TUI, the web server (src/web/) and the non-interactive commands
     web-dist/          the web app, built from web/ (committed)

@@ -141,6 +141,14 @@ export interface Git {
   changed: number;
 }
 
+/** The theme files a plugin brings (served under /skin/). */
+export interface SkinInfo {
+  name: string;
+  theme: boolean;
+  icons: boolean;
+  product_icons: boolean;
+}
+
 export interface VoiceModel {
   name: string;
   mb: number;
@@ -199,7 +207,11 @@ export type ServerMessage =
       settings: { model: string | null; effort: string | null; approval: "auto" | "ask" };
       voice: Voice;
       status: PluginStatus[];
-      git: Git | null;
+      /** By folder, relative to where codeit started ("" for it). */
+      gits: Record<string, Git | null>;
+      /** codeit started in a folder of projects: each session picks one. */
+      workspace: boolean;
+      skin: SkinInfo | null;
       bridge: Bridge;
       problems: string[];
       sessions: SessionMeta[];
@@ -216,6 +228,8 @@ export type ServerMessage =
       queue: string[];
       asks: { id: number; ask: AskView }[];
       todos: Todo[];
+      /** The session's folder, relative to where codeit started ("" for it). */
+      project: string;
       context: [number, number] | null;
       settings: Settings;
       /** Sent to every tab (after /undo): only the tabs showing that session take it. */
@@ -233,7 +247,8 @@ export type ServerMessage =
   | { type: "commands"; commands: Command[] }
   | { type: "models"; models: Models }
   | { type: "status"; status: PluginStatus[] }
-  | { type: "git"; git: Git | null }
+  | { type: "git"; path: string; git: Git | null }
+  | { type: "project"; session: string; project: string }
   | { type: "voice"; voice: Voice }
   | { type: "bridge"; bridge: Bridge }
   | { type: "panel"; seq: number; reply: PanelReply }
@@ -274,4 +289,5 @@ export type ClientMessage =
   | { type: "voice"; model?: string; language?: string }
   | { type: "voice_download"; model: string }
   | { type: "bridge_refresh"; site: string }
-  | { type: "bridge_reload" };
+  | { type: "bridge_reload" }
+  | { type: "project"; session: string; path: string };

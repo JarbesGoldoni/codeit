@@ -49,6 +49,8 @@ pub enum Event {
         digest: Option<String>,
     },
     Todos(Vec<Todo>),
+    /// The session moved to another project folder (the `project` tool).
+    Project(std::path::PathBuf),
     /// The model needs an answer before it can go on.
     Ask(Ask),
     /// A model request finished. `context` is (tokens used, usable limit) when the limit is known.

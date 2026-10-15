@@ -105,6 +105,13 @@ pub struct Session {
     /// The user cleared the todo list; the model is told with the next message.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub todos_cleared: bool,
+    /// The project the session works in, a folder inside `cwd` (set with the `project` tool or
+    /// by the user). Commands and relative paths start there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<PathBuf>,
+    /// The user moved the session to another project; the model is told with the next message.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_moved: bool,
     #[serde(default)]
     pub changes: Vec<FileChange>,
     #[serde(default)]
@@ -164,12 +171,19 @@ impl Session {
             summary: None,
             todos: Vec::new(),
             todos_cleared: false,
+            project: None,
+            project_moved: false,
             changes: Vec::new(),
             files: HashMap::new(),
             instructions: Vec::new(),
             approved: Ruleset::default(),
             last_usage: None,
         }
+    }
+
+    /// Where commands run and relative paths start: the project, else `cwd`.
+    pub fn workdir(&self) -> PathBuf {
+        self.project.clone().unwrap_or_else(|| self.cwd.clone())
     }
 
     pub fn meta(&self) -> SessionMeta {
@@ -277,7 +291,8 @@ impl Session {
         let prompt = self.entries[start].prompt.clone().unwrap_or_default();
         let mut restored = Vec::new();
         let mut skipped = Vec::new();
-        let root = util::git_root(&self.cwd).unwrap_or(self.cwd.clone());
+        let dir = self.workdir();
+        let root = util::git_root(&dir).unwrap_or(dir);
         let snap = match (&self.entries[start].before, &self.entries[start].after) {
             (Some(b), Some(a)) => crate::snapshot::restore(&root, b, a).ok(),
             _ => None,

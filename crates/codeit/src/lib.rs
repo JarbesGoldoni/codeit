@@ -11,6 +11,7 @@
 mod cli;
 mod export;
 mod login;
+pub mod skin;
 mod state;
 mod tui;
 mod web;
@@ -25,6 +26,8 @@ use codeit_providers::Provider;
 pub struct Plugins {
     pub providers: Vec<Arc<dyn Provider>>,
     pub extensions: Vec<Arc<dyn Extension>>,
+    /// The web app's look (colors, icons), when the plugin brings one.
+    pub skin: Option<skin::Skin>,
 }
 
 static PLUGINS: OnceLock<Plugins> = OnceLock::new();
@@ -36,6 +39,10 @@ pub(crate) fn providers() -> Vec<Arc<dyn Provider>> {
         v.extend(p.providers.iter().cloned());
     }
     v
+}
+
+pub(crate) fn skin() -> Option<&'static skin::Skin> {
+    PLUGINS.get().and_then(|p| p.skin.as_ref())
 }
 
 pub(crate) fn extensions() -> Vec<Arc<dyn Extension>> {

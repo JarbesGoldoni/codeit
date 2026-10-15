@@ -1,16 +1,17 @@
-import { store, useStore } from "../store";
+import { gitOf, store, useStore } from "../store";
 import { tokens } from "../format";
 
 const MARK: Record<string, string> = { pending: "○", in_progress: "◐", completed: "●", cancelled: "●" };
 
 export function SidePanel() {
   const session = useStore((s) => s.session);
-  const git = useStore((s) => s.git);
+  const git = useStore(gitOf);
   const status = useStore((s) => s.status);
   const bridge = useStore((s) => s.bridge);
   const cwd = useStore((s) => s.cwd);
   if (!session) return null;
   const ctx = session.context;
+  const folder = session.project ? `${cwd}/${session.project}` : cwd;
   return (
     <aside className="sidepanel">
       <section>
@@ -36,8 +37,8 @@ export function SidePanel() {
         )}
         <div className="kv">
           <span>Folder</span>
-          <span className="mono ellipsis" title={cwd}>
-            {cwd}
+          <span className="mono ellipsis" title={folder}>
+            {folder}
           </span>
         </div>
       </section>

@@ -45,5 +45,5 @@ impl Extension for SiteCookies {
 #[tokio::main]
 async fn main() {
     let url = std::env::var("SITE_URL").unwrap_or_else(|_| "http://localhost:8000/".into());
-    codeit::main(codeit::Plugins { providers: Vec::new(), extensions: vec![Arc::new(SiteCookies { url })] }).await
+    codeit::main(codeit::Plugins { extensions: vec![Arc::new(SiteCookies { url })], ..Default::default() }).await
 }
