@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { modelOf, store, useStore } from "../store";
-import { record, transcribe, type Recording } from "../voice";
+import { modelOf, speechEngine, store, useStore } from "../store";
+import { listen, type Recording } from "../voice";
 import { tokens } from "../format";
 import { Asks } from "./Asks";
 
@@ -43,6 +43,8 @@ type VoiceState = { kind: "idle" } | { kind: "recording"; rec: Recording; since:
 function useVoice(insert: (text: string) => void) {
   const [state, setState] = useState<VoiceState>({ kind: "idle" });
   const [level, setLevel] = useState(0);
+  // What the browser's speech service has heard so far (Whisper gives text only at the end).
+  const [partial, setPartial] = useState("");
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -61,8 +63,21 @@ function useVoice(insert: (text: string) => void) {
     const s = stateRef.current;
     if (s.kind === "working") return;
     if (s.kind === "idle") {
+      const engine = speechEngine(store.state);
+      if (!engine) {
+        store.setOverlay({ kind: "voice" });
+        return;
+      }
+      setPartial("");
       try {
-        const rec = await record();
+        const rec = await listen(engine, store.state.voice?.language ?? "auto", {
+          partial: setPartial,
+          broke: (e) => {
+            store.toast(e.message, true);
+            setPartial("");
+            setState({ kind: "idle" });
+          },
+        });
         setState({ kind: "recording", rec, since: Date.now() });
       } catch (e) {
         store.toast(`Microphone: ${e instanceof Error ? e.message : String(e)}`, true);
@@ -71,13 +86,13 @@ function useVoice(insert: (text: string) => void) {
     }
     setState({ kind: "working" });
     try {
-      const pcm = await s.rec.stop();
-      const text = await transcribe(pcm);
+      const text = await s.rec.stop();
       if (text) insert(text);
       else store.toast("Didn't catch anything.");
     } catch (e) {
       store.toast(e instanceof Error ? e.message : String(e), true);
     }
+    setPartial("");
     setState({ kind: "idle" });
   };
 
@@ -85,11 +100,12 @@ function useVoice(insert: (text: string) => void) {
     const s = stateRef.current;
     if (s.kind === "recording") {
       s.rec.cancel();
+      setPartial("");
       setState({ kind: "idle" });
     }
   };
 
-  return { state, level, toggle, cancel };
+  return { state, level, partial, toggle, cancel };
 }
 
 function CommandMenu({
@@ -146,7 +162,7 @@ function Toolbar({ voice }: { voice: ReturnType<typeof useVoice> }) {
   const session = useStore((s) => s.session);
   const agents = useStore((s) => s.agents);
   const model = useStore(modelOf);
-  const voiceSetup = useStore((s) => s.voice);
+  const engine = useStore(speechEngine);
   const loading = useStore((s) => s.models.loading);
   if (!session) return null;
   const { settings, context } = session;
@@ -157,7 +173,6 @@ function Toolbar({ voice }: { voice: ReturnType<typeof useVoice> }) {
   };
   const ctx = context ? Math.min(100, Math.round((context[0] / context[1]) * 100)) : null;
   const rec = voice.state.kind === "recording";
-  const engine = voiceSetup?.engine;
   return (
     <div className="toolbar">
       <button className={`pill agent ${settings.agent}`} onClick={nextAgent} title="Tab switches agent">
@@ -193,12 +208,12 @@ function Toolbar({ voice }: { voice: ReturnType<typeof useVoice> }) {
       )}
       <button
         className={`iconbtn mic${rec ? " rec" : ""}${voice.state.kind === "working" ? " busy" : ""}`}
-        onClick={() => (engine ? void voice.toggle() : store.setOverlay({ kind: "voice" }))}
+        onClick={() => void voice.toggle()}
         title={
           engine
             ? rec
-              ? "Stop and transcribe (ctrl+shift+space)"
-              : "Talk (ctrl+shift+space)"
+              ? "Stop (ctrl+shift+space)"
+              : `Talk (ctrl+shift+space), with ${engine === "browser" ? "the browser's speech service" : "Whisper"}`
             : "Speech to text isn't set up here: click for how"
         }
         style={rec ? { boxShadow: `0 0 0 ${2 + voice.level * 10}px var(--rec-glow)` } : undefined}
@@ -390,6 +405,7 @@ export function Composer() {
             <span className="muted small">↑ takes the last one back</span>
           </div>
         )}
+        {voice.partial && <div className="heard">{voice.partial}</div>}
         {menuOpen && <CommandMenu query={slash ?? ""} selected={Math.min(menuSel, matches.length - 1)} onPick={pick} />}
         <div
           className={`composer${voice.state.kind === "recording" ? " recording" : ""}`}

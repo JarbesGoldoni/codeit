@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { store, useStore } from "../store";
+import { speechEngine, store, useStore } from "../store";
 import { ago } from "../format";
 
 export function Sidebar() {
@@ -11,7 +11,7 @@ export function Sidebar() {
   const plugins = useStore((s) => s.plugins);
   const commands = useStore((s) => s.commands);
   const connected = useStore((s) => s.connected);
-  const voice = useStore((s) => s.voice);
+  const speech = useStore(speechEngine);
   const bridge = useStore((s) => s.bridge);
   const [filter, setFilter] = useState("");
   const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
@@ -98,7 +98,7 @@ export function Sidebar() {
           Logins
         </button>
         <button className="footbtn" onClick={() => store.setOverlay({ kind: "voice" })}>
-          Voice <span className={`dot ${voice?.engine ? "ok" : "off"}`} />
+          Voice <span className={`dot ${speech ? "ok" : "off"}`} />
         </button>
         <button className="footbtn" onClick={() => store.setOverlay({ kind: "browser" })}>
           Browser <span className={`dot ${bridge.browsers.length ? "ok" : "off"}`} />

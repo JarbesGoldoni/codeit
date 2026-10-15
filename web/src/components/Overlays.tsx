@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { modelOf, store, useStore } from "../store";
+import { modelOf, speechEngine, store, useStore } from "../store";
+import { browserSpeech } from "../voice";
 import { ago, tokens } from "../format";
 import { Palette, type Option } from "./Palette";
 import type { LoginChoice } from "../protocol";
@@ -225,72 +226,105 @@ const LANGUAGES = [
 
 function VoiceSettings() {
   const voice = useStore((s) => s.voice);
+  const picked = useStore((s) => s.speech);
+  const engine = useStore(speechEngine);
   const close = () => store.setOverlay(null);
   if (!voice) return null;
-  const english = voice.model.endsWith(".en");
+  const browser = browserSpeech();
+  const chosen = picked ?? (voice.engine ? "whisper" : "browser");
+  const english = chosen === "whisper" && voice.model.endsWith(".en");
   return (
     <div className="overlay" onMouseDown={close}>
       <div className="dialog wide" onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Escape" && close()}>
         <div className="dialoghead">Voice</div>
         <div className="dialogbody">
-          {voice.engine ? (
-            <p className="muted">
-              Click the mic in the message box, or press <kbd>ctrl+shift+space</kbd>, talk, then press it again. Whisper turns
-              it into text on this machine ({voice.engine}); you check it before sending. Nothing leaves your computer.
-            </p>
-          ) : (
-            <div className="setup">
-              <p>
-                <b>Speech to text isn't set up in this build.</b> Either:
-              </p>
-              <ul>
-                <li>
-                  build codeit with whisper.cpp inside: <code>cargo install … --features voice</code> (needs <code>cmake</code> and a C++
-                  compiler: <code>sudo apt install cmake build-essential</code> on Ubuntu/WSL), or
-                </li>
-                <li>
-                  put whisper.cpp's <code>whisper-cli</code> on your PATH and restart <code>codeit web</code>.
-                </li>
-              </ul>
-            </div>
-          )}
-          <h4>Model</h4>
-          {voice.custom_model && <p className="muted small">CODEIT_WHISPER_MODEL is set: that file is used whatever you pick.</p>}
+          <p className="muted">
+            Click the mic in the message box, or press <kbd>ctrl+shift+space</kbd>, talk, then press it again. The text goes in
+            the box; you check it before sending.
+          </p>
+          <h4>Speech to text with</h4>
           <div className="models">
-            {voice.models.map((m) => {
-              const dl = voice.downloading?.model === m.name ? voice.downloading : null;
-              return (
-                <label key={m.name} className={`vmodel${voice.model === m.name ? " on" : ""}`}>
-                  <input
-                    type="radio"
-                    name="vmodel"
-                    checked={voice.model === m.name}
-                    onChange={() => store.send({ type: "voice", model: m.name })}
-                  />
-                  <span className="vname">{m.name}</span>
-                  <span className="muted">{m.what}</span>
-                  <span className="vsize">
-                    {dl ? (
-                      `${Math.round((dl.done / (dl.total ?? m.mb * 1e6)) * 100)}%`
-                    ) : m.ready ? (
-                      <span className="tone-ok">downloaded</span>
-                    ) : (
-                      <button
-                        className="link"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          store.send({ type: "voice_download", model: m.name });
-                        }}
-                      >
-                        get ({m.mb} MB)
-                      </button>
-                    )}
-                  </span>
-                </label>
-              );
-            })}
+            <label className={`vengine${chosen === "browser" ? " on" : ""}`}>
+              <input type="radio" name="vengine" checked={chosen === "browser"} onChange={() => store.setSpeech("browser")} />
+              <span>
+                <b>The browser's speech service</b>{" "}
+                {browser.ok ? <span className="muted">({browser.who})</span> : <span className="tone-bad">(not in this browser)</span>}
+                <br />
+                <span className="muted small">
+                  Nothing to install, and you see the words as you talk. The audio goes to {browser.who.split(" ")[0]}'s servers.
+                </span>
+              </span>
+            </label>
+            <label className={`vengine${chosen === "whisper" ? " on" : ""}`}>
+              <input type="radio" name="vengine" checked={chosen === "whisper"} onChange={() => store.setSpeech("whisper")} />
+              <span>
+                <b>Whisper, on this machine</b>{" "}
+                {voice.engine ? <span className="muted">({voice.engine})</span> : <span className="tone-bad">(not set up)</span>}
+                <br />
+                <span className="muted small">Nothing leaves your computer. Needs a model (75 MB and up) from Hugging Face.</span>
+              </span>
+            </label>
           </div>
-          {voice.error && <p className="tone-bad small">{voice.error}</p>}
+          {!engine && chosen === "browser" && (
+            <p className="tone-bad small">This browser has no speech service: use Edge or Chrome, or Whisper.</p>
+          )}
+          {chosen === "whisper" && (
+            <>
+              {!voice.engine && (
+                <div className="setup">
+                  <p>
+                    <b>Whisper isn't set up in this build.</b> Either:
+                  </p>
+                  <ul>
+                    <li>
+                      build codeit with whisper.cpp inside: <code>cargo install … --features voice</code> (needs <code>cmake</code> and a C++
+                      compiler: <code>sudo apt install cmake build-essential</code> on Ubuntu/WSL), or
+                    </li>
+                    <li>
+                      put whisper.cpp's <code>whisper-cli</code> on your PATH and restart <code>codeit web</code>.
+                    </li>
+                  </ul>
+                </div>
+              )}
+              <h4>Model</h4>
+              {voice.custom_model && <p className="muted small">CODEIT_WHISPER_MODEL is set: that file is used whatever you pick.</p>}
+              <div className="models">
+                {voice.models.map((m) => {
+                  const dl = voice.downloading?.model === m.name ? voice.downloading : null;
+                  return (
+                    <label key={m.name} className={`vmodel${voice.model === m.name ? " on" : ""}`}>
+                      <input
+                        type="radio"
+                        name="vmodel"
+                        checked={voice.model === m.name}
+                        onChange={() => store.send({ type: "voice", model: m.name })}
+                      />
+                      <span className="vname">{m.name}</span>
+                      <span className="muted">{m.what}</span>
+                      <span className="vsize">
+                        {dl ? (
+                          `${Math.round((dl.done / (dl.total ?? m.mb * 1e6)) * 100)}%`
+                        ) : m.ready ? (
+                          <span className="tone-ok">downloaded</span>
+                        ) : (
+                          <button
+                            className="link"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              store.send({ type: "voice_download", model: m.name });
+                            }}
+                          >
+                            get ({m.mb} MB)
+                          </button>
+                        )}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              {voice.error && <p className="tone-bad small">{voice.error}</p>}
+            </>
+          )}
           <h4>Language</h4>
           <select
             value={english ? "en" : voice.language}

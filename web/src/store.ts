@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { applyOps } from "./timeline";
+import { browserSpeech, type Engine } from "./voice";
 import type {
   AskView,
   Bridge,
@@ -82,6 +83,8 @@ export interface State {
   status: PluginStatus[];
   git: Git | null;
   voice: Voice | null;
+  /** The speech-to-text engine this browser picked (null: Whisper when codeit has it). */
+  speech: Engine | null;
   bridge: Bridge;
   sessions: SessionMeta[];
   session: SessionView | null;
@@ -106,6 +109,7 @@ const initial: State = {
   status: [],
   git: null,
   voice: null,
+  speech: savedSpeech(),
   bridge: { browsers: [], sites: [] },
   sessions: [],
   session: null,
@@ -114,6 +118,25 @@ const initial: State = {
   toasts: [],
   login: { providers: null, started: null, done: null },
 };
+
+function savedSpeech(): Engine | null {
+  try {
+    const v = localStorage.getItem("codeit.speech");
+    return v === "browser" || v === "whisper" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The engine the mic uses here, or null when neither works. */
+export function speechEngine(s: State): Engine | null {
+  const whisper = !!s.voice?.engine;
+  const browser = browserSpeech().ok;
+  const want = s.speech ?? (whisper ? "whisper" : "browser");
+  if (want === "browser" && browser) return "browser";
+  if (want === "whisper" && whisper) return "whisper";
+  return null;
+}
 
 type Listener = () => void;
 
@@ -213,6 +236,15 @@ class Store {
   stop() {
     const s = this.state.session;
     if (s) this.send({ type: "stop", session: s.id });
+  }
+
+  setSpeech(speech: Engine) {
+    try {
+      localStorage.setItem("codeit.speech", speech);
+    } catch {
+      // Remembered for this tab only.
+    }
+    this.set({ speech });
   }
 
   setOverlay(overlay: Overlay) {

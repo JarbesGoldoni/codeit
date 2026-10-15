@@ -7,7 +7,7 @@ codeit works like [opencode](https://github.com/anomalyco/opencode): the same ca
 What it adds:
 
 - **A calm, readable UI.** On a soft gray background: your messages and the answers in bubbles, thinking in gray (both shown smoothly as they stream), actions in a faint frame, a side bubble with the context used and your branch, and popups for models, sessions and effort.
-- **A web app too.** `codeit web` opens the same agent in a browser tab, served by the same binary: a conversation like a chat, actions you can open, a side panel, plugin panels as dialogs, and voice input transcribed on your machine.
+- **A web app too.** `codeit web` opens the same agent in a browser tab, served by the same binary: a conversation like a chat, actions you can open, a side panel, plugin panels as dialogs, and voice input (Whisper on your machine, or the browser's own speech service).
 - **Light.** One native binary, with no Node or Bun runtime behind it.
 
 codeit reads, searches and edits code, runs commands, plans, delegates to subagents, asks before risky actions, and keeps sessions you can resume and undo. It reviews diffs like a pull request (`/review`) and uses a cheaper model to condense long tool output (`/models`).
@@ -161,7 +161,12 @@ The server only answers on `localhost`, and only to its own page and to codeit's
 
 ### Voice
 
-Click the microphone (or press Ctrl+Shift+Space), talk, and click it again: the text goes into the message box for you to check before sending. The browser records; codeit transcribes with [Whisper](https://github.com/ggml-org/whisper.cpp) on your machine, so nothing leaves it. The first time, codeit downloads the model (`base.en`, 142 MB, to `~/.local/share/codeit/whisper/`); the Voice button at the bottom left picks another (`tiny.en` is the fastest, the ones without `.en` hear other languages) and the language.
+Click the microphone (or press Ctrl+Shift+Space), talk, and click it again: the text goes into the message box for you to check before sending. The Voice button at the bottom left picks how it's turned into text (each browser remembers its choice):
+
+- **The browser's speech service** (the Web Speech API): nothing to install, and you see the words while you talk. Edge sends the audio to Microsoft, Chrome to Google. It's what codeit uses when it has no Whisper.
+- **Whisper, on your machine:** nothing leaves it.
+
+With Whisper, the browser records and codeit transcribes with [Whisper](https://github.com/ggml-org/whisper.cpp) on your machine, so nothing leaves it. The first time, codeit downloads the model (`base.en`, 142 MB, to `~/.local/share/codeit/whisper/`); the Voice dialog picks another (`tiny.en` is the fastest, the ones without `.en` hear other languages) and the language.
 
 Whisper comes in one of two ways:
 
