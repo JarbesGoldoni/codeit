@@ -242,6 +242,38 @@ impl Session {
         let _ = std::fs::remove_file(dir().join(format!("{id}.meta.json")));
     }
 
+    /// A copy to take in another direction: the whole conversation, or with `prompt` (counting
+    /// the prompts after the summary, from 0) the part before that prompt, plus its text.
+    /// Files are shared, as with any session in the folder.
+    pub fn fork(&self, prompt: Option<usize>) -> Result<(Session, Option<String>)> {
+        let start = self.context_start.min(self.entries.len());
+        let (end, text) = match prompt {
+            None => (self.entries.len(), None),
+            Some(n) => {
+                let i = (start..self.entries.len())
+                    .filter(|&i| self.entries[i].is_prompt())
+                    .nth(n)
+                    .context("no such message")?;
+                (i, self.entries[i].prompt.clone())
+            }
+        };
+        let now = util::now();
+        let mut s = self.clone();
+        s.id = uuid::Uuid::new_v4().to_string();
+        s.title = match self.title.as_str() {
+            "" => "Fork".into(),
+            t if t.starts_with("Fork of ") => t.into(),
+            t => format!("Fork of {t}"),
+        };
+        (s.created, s.updated) = (now, now);
+        s.entries.truncate(end);
+        s.changes.retain(|c| c.entry < end);
+        if end < self.entries.len() {
+            s.last_usage = None;
+        }
+        Ok((s, text))
+    }
+
     /// Empties the todo list for the user; their next message tells the model.
     pub fn clear_todos(&mut self) {
         self.todos.clear();
@@ -427,6 +459,31 @@ mod tests {
         assert_eq!(Session::list(Some(Path::new("/rename-test")))[0].title, "new");
         Session::delete(&s.id);
         assert!(Session::list(Some(Path::new("/rename-test"))).is_empty());
+    }
+
+    #[test]
+    fn fork_copies_the_whole_session_or_the_part_before_a_prompt() {
+        let mut s = Session::new(Path::new("/fork-test"), "build", None, None);
+        s.title = "plan".into();
+        for text in ["one", "two"] {
+            let mut e = Entry::new(Message::user(text));
+            e.prompt = Some(text.into());
+            s.push(e);
+            s.push(Entry::new(Message::assistant(format!("re {text}"))));
+        }
+        s.changes.push(FileChange { entry: 3, path: "/fork-test/a".into(), before: None });
+
+        let (all, text) = s.fork(None).unwrap();
+        assert_ne!(all.id, s.id);
+        assert_eq!((all.title.as_str(), all.entries.len(), all.changes.len(), text), ("Fork of plan", 4, 1, None));
+
+        let (part, text) = s.fork(Some(1)).unwrap();
+        assert_eq!((part.entries.len(), part.changes.len(), text.as_deref()), (2, 0, Some("two")));
+
+        // After a summary, prompts count from the first one the model still sees.
+        s.context_start = 2;
+        assert_eq!(s.fork(Some(0)).unwrap().0.entries.len(), 2);
+        assert!(s.fork(Some(1)).is_err());
     }
 
     #[test]

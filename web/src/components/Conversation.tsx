@@ -136,12 +136,22 @@ function group(items: Item[]): (Item | Tool[])[] {
   return out;
 }
 
-function Entry({ item, last, busy }: { item: Item; last: boolean; busy: boolean }) {
+function Entry({ item, last, busy, prompt }: { item: Item; last: boolean; busy: boolean; prompt: number }) {
   switch (item.kind) {
     case "user":
       return (
         <div className="user">
           <div className="bubble">{item.text}</div>
+          <div className="answertools">
+            <CopyButton text={item.text} />
+            <button
+              className="copy"
+              title="A new session with the conversation before this message, and the message in the input to change"
+              onClick={() => store.fork(prompt)}
+            >
+              Fork from here
+            </button>
+          </div>
         </div>
       );
     case "assistant": {
@@ -240,6 +250,8 @@ export function Conversation() {
 
   if (!session) return <div className="conversation" />;
   const groups = group(session.items);
+  // Each message you wrote, by its place among them (what forking at it needs).
+  let prompt = 0;
   return (
     <div
       className="conversation"
@@ -255,7 +267,13 @@ export function Conversation() {
           Array.isArray(g) ? (
             <Steps key={g[0].id} tools={g} />
           ) : (
-            <Entry key={i} item={g} last={i === groups.length - 1} busy={session.busy} />
+            <Entry
+              key={i}
+              item={g}
+              last={i === groups.length - 1}
+              busy={session.busy}
+              prompt={g.kind === "user" ? prompt++ : -1}
+            />
           ),
         )}
         {session.busy && <Working />}

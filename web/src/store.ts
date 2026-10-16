@@ -249,6 +249,12 @@ class Store {
     this.open(null);
   }
 
+  /** A copy of this session; with `prompt` (the nth message you wrote), the part before it. */
+  fork(prompt?: number) {
+    const s = this.state.session;
+    if (s) this.send({ type: "fork", session: s.id, prompt });
+  }
+
   submit(text: string) {
     const s = this.state.session;
     if (!s || !text.trim()) return;

@@ -283,6 +283,7 @@ export type ClientMessage =
   | { type: "sessions" }
   | { type: "rename"; session: string; title: string }
   | { type: "delete"; session: string }
+  | { type: "fork"; session: string; prompt?: number }
   | { type: "logins" }
   | { type: "login_key"; provider: string; key: string }
   | { type: "login_start"; provider: string; method: string; enterprise?: string }

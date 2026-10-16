@@ -50,6 +50,7 @@ const BUILTIN: &[(&str, &str, &str)] = &[
     ("/agent", "[name]", "switch agent: build or plan"),
     ("/new", "", "start a new session"),
     ("/session", "", "switch sessions; a running one keeps working"),
+    ("/fork", "", "copy this session into a new one, to try another direction"),
     ("/undo", "", "undo the last turn and its file changes"),
     ("/compact", "", "summarize the conversation to free context"),
     ("/todos", "clear", "clear the todo list"),
@@ -166,6 +167,12 @@ enum In {
     },
     Delete {
         session: String,
+    },
+    /// A copy of the session; with `prompt` (the nth message you wrote), the part before it.
+    Fork {
+        session: String,
+        #[serde(default)]
+        prompt: Option<usize>,
     },
     Logins,
     LoginKey {
@@ -563,6 +570,7 @@ impl Server {
             }
             In::Sessions => reply(json!({"type": "sessions", "sessions": self.sessions()})),
             In::Rename { session, title } => self.rename(&session, &title),
+            In::Fork { session, prompt } => self.fork(&session, prompt, tx),
             In::Delete { session } => {
                 let busy = self.with_live(&session, |l, _| l.turn.is_some()).unwrap_or(false);
                 if busy {
@@ -861,6 +869,25 @@ impl Server {
         }
         self.broadcast(json!({"type": "title", "session": id, "title": title}));
         self.broadcast(json!({"type": "sessions", "sessions": self.sessions()}));
+    }
+
+    /// Saves a copy of a session and shows it in this tab, with the message it was forked at
+    /// back in the input.
+    fn fork(&self, id: &str, prompt: Option<usize>, tx: &mpsc::UnboundedSender<String>) {
+        let forked = self.with_live(id, |l, _| l.session.lock().unwrap().fork(prompt));
+        let saved = forked
+            .unwrap_or_else(|| Err(anyhow!("no such session")))
+            .and_then(|(mut s, text)| s.save().map(|_| (s.id, text)));
+        match saved {
+            Ok((fork, text)) => {
+                let _ = tx.send(self.open(Some(fork.clone())).to_string());
+                if let Some(text) = text {
+                    let _ = tx.send(json!({"type": "input", "session": fork, "text": text}).to_string());
+                }
+                self.broadcast(json!({"type": "sessions", "sessions": self.sessions()}));
+            }
+            Err(e) => self.notice(id, format!("Couldn't fork: {e:#}"), true),
+        }
     }
 
     /// Changes a session's timeline and tells every tab.
@@ -1242,6 +1269,7 @@ impl Server {
                 self.notice(id, "Cleared the todo list; codeit hears about it with your next message.", false);
             }
             ("todos", _) => self.notice(id, "/todos clear empties the todo list.", false),
+            ("fork", _) => self.fork(id, None, tx),
             ("rename", "") => self.notice(id, "Usage: /rename <new title>", false),
             ("rename", title) => self.rename(id, title),
             ("export", path) => {

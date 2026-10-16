@@ -249,6 +249,7 @@ const BUILTIN: &[(&str, &str, &str)] = &[
     ("/agent", "[name]", "switch agent: build or plan (tab cycles)"),
     ("/new", "", "start a new session"),
     ("/session", "", "switch sessions; a running one keeps working"),
+    ("/fork", "", "copy this session into a new one, to try another direction"),
     ("/undo", "", "undo the last turn and its file changes"),
     ("/compact", "", "summarize the conversation to free context"),
     ("/todos", "clear", "clear the todo list"),
@@ -2251,6 +2252,13 @@ impl App {
                 }
             }
             ("/new", _) => self.new_session(),
+            ("/fork", _) => {
+                let forked = self.session.lock().unwrap().fork(None);
+                match forked.and_then(|(mut f, _)| f.save().map(|_| f.id)) {
+                    Ok(id) => self.resume(&id),
+                    Err(e) => self.error(format!("Couldn't fork: {e:#}")),
+                }
+            }
             ("/session", _) => {
                 let list = Session::list(Some(&self.harness.cwd));
                 if list.is_empty() {

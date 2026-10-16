@@ -566,7 +566,8 @@ a {
 
 .user {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
 }
 .bubble {
   background: var(--user);
@@ -587,7 +588,8 @@ a {
   transition: opacity 0.15s;
   margin-top: 2px;
 }
-.assistant:hover .answertools {
+.assistant:hover .answertools,
+.user:hover .answertools {
   opacity: 1;
 }
 
